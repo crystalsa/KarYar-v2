@@ -1,0 +1,197 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'ایجاد ریلیز در گیت‌هاب (Create GitHub Release)'
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: 'تگ نسخه (اختیاری، مثلاً v1.0.1)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradlew Executable
+        run: |
+          sed -i -e 's/\r$//' gradlew || true
+          chmod +x gradlew
+
+      - name: Restore Debug Keystore if needed
+        run: |
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            base64 --decode debug.keystore.base64 > debug.keystore 2>/dev/null || base64 -d debug.keystore.base64 > debug.keystore
+          fi
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --no-configuration-cache --stacktrace
+
+  build:
+    name: Build Android APK
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Accept Android SDK Licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradlew Executable
+        run: |
+          sed -i -e 's/\r$//' gradlew || true
+          chmod +x gradlew
+
+      - name: Prepare Keystore & Signing Environment
+        id: prep_signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          # 1. Restore static debug.keystore (from Secret or repo base64, never random keytool)
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            echo "Restoring debug.keystore from DEBUG_KEYSTORE_BASE64 secret..."
+            echo "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/debug.keystore" 2>/dev/null || echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/debug.keystore"
+          elif [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            echo "Restoring debug.keystore from repository debug.keystore.base64..."
+            base64 --decode debug.keystore.base64 > debug.keystore 2>/dev/null || base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          
+          # 2. Check release signing secrets
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding release keystore from KEYSTORE_BASE64..."
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release.keystore" 2>/dev/null || echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+            if [ ! -s "$GITHUB_WORKSPACE/release.keystore" ]; then
+              echo "::error::KEYSTORE_BASE64 is provided but base64 decoding failed or produced an empty file!"
+              exit 1
+            fi
+            echo "has_release_keystore=true" >> $GITHUB_OUTPUT
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=$STORE_PASSWORD" >> $GITHUB_ENV
+            echo "KEY_ALIAS=$KEY_ALIAS" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
+          else
+            echo "has_release_keystore=false" >> $GITHUB_OUTPUT
+            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+              echo "::warning::Workflow triggered on release tag '${{ github.ref }}', but KEYSTORE_BASE64 is missing! Only debug APK artifact will be uploaded. Public GitHub Release will NOT be created without a release keystore."
+            fi
+          fi
+
+      - name: Determine Version Info
+        id: version_info
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION_NAME="${TAG#v}"
+            IS_RELEASE="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.create_release }}" == "true" && -n "${{ inputs.release_tag }}" ]]; then
+            TAG="${{ inputs.release_tag }}"
+            VERSION_NAME="${TAG#v}"
+            IS_RELEASE="true"
+          else
+            TAG=""
+            VERSION_NAME="1.0.0"
+            IS_RELEASE="false"
+          fi
+          
+          COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+          echo "VERSION_CODE=$COMMIT_COUNT" >> $GITHUB_ENV
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
+
+      - name: Build APK (Release or Debug)
+        run: |
+          mkdir -p artifacts
+          if [ "${{ steps.prep_signing.outputs.has_release_keystore }}" == "true" ]; then
+            echo "Building signed Release APK..."
+            ./gradlew assembleRelease --no-configuration-cache --stacktrace
+            APK_FILE=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)
+          else
+            echo "Building Debug APK..."
+            ./gradlew assembleDebug --no-configuration-cache --stacktrace
+            APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" 2>/dev/null | head -n 1)
+          fi
+          
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find app/build/outputs/apk -name "*.apk" 2>/dev/null | head -n 1)
+          fi
+          
+          if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+            cp "$APK_FILE" artifacts/WorkerManager-App.apk
+            echo "Generated APK: artifacts/WorkerManager-App.apk"
+            ls -lh artifacts/WorkerManager-App.apk
+          else
+            echo "::error::No APK file found after build!"
+            exit 1
+          fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkerManager-APK
+          path: artifacts/WorkerManager-App.apk
+          retention-days: 30
+
+      - name: Create GitHub Release (Only on v* tag with signed release keystore)
+        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && steps.prep_signing.outputs.has_release_keystore == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version_info.outputs.tag }}
+          name: نسخه ${{ steps.version_info.outputs.tag }} - برنامه مدیریت کارگران
+          body: |
+            ### 📱 فایل نصبی اندروید (APK امضاشده نسخه ریلیز)
+            - **نسخه:** `${{ steps.version_info.outputs.tag }}`
+            - **کد نسخه:** `${{ env.VERSION_CODE }}`
+            
+            📥 جهت دانلود و نصب روی گوشی اندروید، فایل `WorkerManager-App.apk` را از بخش Assets در پایین دانلود نمایید.
+          files: artifacts/WorkerManager-App.apk
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,6 @@
+{
+  "name": "مدیریت کارگران",
+  "description": "سامانه مدرن مدیریت کارگران، ثبت تردد ورود و خروج، دستمزد ساعتی و روزانه، اضافه کاری، گزارش‌های تحلیلی کارکرد و تسویه حساب و خروجی PDF و اکسل",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
