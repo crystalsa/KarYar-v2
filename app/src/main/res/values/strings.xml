@@ -1,3 +1,28 @@
 <resources>
-    <string name="app_name">My Application</string>
+    <string name="app_name">مدیریت کارگران</string>
+    <string name="app_subtitle">پوشه‌ها، ثبت تردد، دستمزد و هزینه‌ها</string>
+    <string name="tab_dashboard">داشبورد</string>
+    <string name="tab_workers">کارگران</string>
+    <string name="tab_attendance">ورود/خروج</string>
+    <string name="tab_reports">گزارشات</string>
+    <string name="foreman_prefix">سرکارگر:</string>
+    <string name="not_specified">تعیین نشده</string>
+    <string name="search_worker_placeholder">جست و جوی کارگر</string>
+    <string name="clear_all_data_title">حذف تمام اطلاعات</string>
+    <string name="clear_all_data_message">آیا مطمئن هستید که می‌خواهید تمام پوشه‌ها و اطلاعات کارگران را پاک کنید؟ برنامه کاملاً خالی خواهد شد.</string>
+    <string name="confirm_delete">حذف</string>
+    <string name="cancel">انصراف</string>
+    <string name="save">ذخیره</string>
+    <string name="submit">ثبت</string>
+    <string name="export_pdf_success">فایل PDF با موفقیت آماده شد</string>
+    <string name="export_pdf_error">خطا در تولید فایل PDF</string>
+    <string name="export_csv_success">فایل CSV با موفقیت ذخیره شد</string>
+    <string name="export_csv_error">خطا در صدور فایل CSV</string>
+    <string name="database_error_generic">خطایی در انجام عملیات پایگاه داده رخ داد</string>
+    <string name="active_worker">کارگر فعال</string>
+    <string name="inactive_worker">کارگر غیرفعال</string>
+    <string name="daily_work_days">روزهای کاری</string>
+    <string name="create_first_day">ایجاد اولین روز کاری</string>
+    <string name="unsaved_changes_title">تغییرات ذخیره‌نشده</string>
+    <string name="unsaved_changes_message">اطلاعات ذخیره نشده است. خارج می‌شوید؟</string>
 </resources>
