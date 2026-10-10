@@ -132,25 +132,39 @@ jobs:
       - name: Determine Version Info
         id: version_info
         run: |
+          # Fetch all remote tags to accurately determine previous versions
+          git fetch --tags --force 2>/dev/null || true
+
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
             VERSION_NAME="${TAG#v}"
-            IS_RELEASE="true"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.create_release }}" == "true" && -n "${{ inputs.release_tag }}" ]]; then
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
             TAG="${{ inputs.release_tag }}"
             VERSION_NAME="${TAG#v}"
-            IS_RELEASE="true"
           else
-            TAG=""
-            VERSION_NAME="1.0.0"
-            IS_RELEASE="false"
+            # Calculate next auto-incremented version based on latest existing tag
+            LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
+            if [ -z "$LATEST_TAG" ]; then
+              TAG="v1.0.1"
+              VERSION_NAME="1.0.1"
+            else
+              CLEAN_TAG="${LATEST_TAG#v}"
+              MAJOR=$(echo "$CLEAN_TAG" | cut -d. -f1)
+              MINOR=$(echo "$CLEAN_TAG" | cut -d. -f2)
+              PATCH=$(echo "$CLEAN_TAG" | cut -d. -f3)
+              if [ -z "$PATCH" ]; then PATCH=0; fi
+              NEXT_PATCH=$((PATCH + 1))
+              TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
+              VERSION_NAME="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+            fi
           fi
           
           COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 1)
           echo "VERSION_CODE=$COMMIT_COUNT" >> $GITHUB_ENV
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$COMMIT_COUNT" >> $GITHUB_OUTPUT
 
       - name: Build APK (Release or Debug)
         run: |
@@ -160,7 +174,7 @@ jobs:
             ./gradlew assembleRelease --no-configuration-cache --stacktrace
             APK_FILE=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)
           else
-            echo "Building Debug APK..."
+            echo "Building Debug APK with persistent keystore signature..."
             ./gradlew assembleDebug --no-configuration-cache --stacktrace
             APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" 2>/dev/null | head -n 1)
           fi
@@ -170,9 +184,10 @@ jobs:
           fi
           
           if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+            cp "$APK_FILE" "artifacts/KarYar-App-${{ steps.version_info.outputs.tag }}.apk"
             cp "$APK_FILE" artifacts/WorkerManager-App.apk
-            echo "Generated APK: artifacts/WorkerManager-App.apk"
-            ls -lh artifacts/WorkerManager-App.apk
+            echo "Generated APK: artifacts/KarYar-App-${{ steps.version_info.outputs.tag }}.apk"
+            ls -lh artifacts/
           else
             echo "::error::No APK file found after build!"
             exit 1
@@ -185,19 +200,21 @@ jobs:
           path: artifacts/WorkerManager-App.apk
           retention-days: 30
 
-      - name: Create GitHub Release (Only on v* tag with signed release keystore)
-        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && steps.prep_signing.outputs.has_release_keystore == 'true'
+      - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}
-          name: نسخه ${{ steps.version_info.outputs.tag }} - برنامه مدیریت کارگران
+          name: نسخه ${{ steps.version_info.outputs.tag }} - برنامه کار‌یار
           body: |
-            ### 📱 فایل نصبی اندروید (APK امضاشده نسخه ریلیز)
-            - **نسخه:** `${{ steps.version_info.outputs.tag }}`
-            - **کد نسخه:** `${{ env.VERSION_CODE }}`
+            ### 📱 فایل نصبی برنامه مدیریت کارگران و کارگاه (KarYar)
+            - **نسخه (Version Name):** `${{ steps.version_info.outputs.version_name }}`
+            - **کد نسخه (Version Code):** `${{ steps.version_info.outputs.version_code }}`
             
-            📥 جهت دانلود و نصب روی گوشی اندروید، فایل `WorkerManager-App.apk` را از بخش Assets در پایین دانلود نمایید.
-          files: artifacts/WorkerManager-App.apk
+            📥 جهت دانلود و نصب روی گوشی اندروید، فایل `KarYar-App-${{ steps.version_info.outputs.tag }}.apk` را از بخش Assets در زیر دانلود نمایید.
+            این فایل با همان کلید امضای ثابت امضا شده و به عنوان به‌روزرسانی نسخه‌های قبلی بدون نیاز به حذف نسخه قبل قابل نصب است.
+          files: |
+            artifacts/KarYar-App-${{ steps.version_info.outputs.tag }}.apk
+            artifacts/WorkerManager-App.apk
           draft: false
           prerelease: false
           make_latest: true
