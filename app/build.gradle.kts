@@ -1,23 +1,22 @@
-import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
-  alias(libs.plugins.secrets)
-  alias(libs.plugins.google.services)
 }
 
 android {
   namespace = "com.karyar.app"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val defaultVersionCode = providers.gradleProperty("VERSION_CODE").orNull?.toIntOrNull() ?: 1
+  val defaultVersionName = providers.gradleProperty("VERSION_NAME").orNull ?: "1.0.0"
+
   defaultConfig {
     applicationId = "com.karyar.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0.0"
+    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: defaultVersionCode
+    versionName = System.getenv("VERSION_NAME") ?: defaultVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     vectorDrawables.useSupportLibrary = true
@@ -30,7 +29,7 @@ android {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
       storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
+      keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
@@ -67,6 +66,7 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
   sourceSets {
     getByName("test").assets.srcDirs("$projectDir/schemas", "$projectDir/src/test/assets")
+    getByName("debug").assets.srcDirs("$projectDir/schemas")
   }
   dependenciesInfo {
     includeInApk = false
@@ -77,16 +77,6 @@ android {
 ksp {
   arg("room.schemaLocation", "$projectDir/schemas")
 }
-
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
-secrets {
-  propertiesFileName = ".env"
-  defaultPropertiesFileName = ".env.example"
-  ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
-}
-
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 dependencies {
   implementation(platform(libs.androidx.compose.bom))

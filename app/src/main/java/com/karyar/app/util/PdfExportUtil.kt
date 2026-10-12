@@ -16,6 +16,7 @@ import com.karyar.app.R
 import com.karyar.app.data.local.entity.ExpenseEntity
 import com.karyar.app.domain.model.DashboardAnalytics
 import com.karyar.app.domain.model.WorkerPerformance
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 
@@ -43,10 +44,19 @@ object PdfExportUtil {
         performances: List<WorkerPerformance>,
         expenses: List<ExpenseEntity> = emptyList()
     ): File {
+        var fontLoadFailed = false
         val vazirTypeface: Typeface = try {
             val tf = ResourcesCompat.getFont(context, R.font.vazirmatn)
-            tf ?: Typeface.DEFAULT
+            if (tf == null) {
+                Log.e("PdfExportUtil", "فونت وزیرمتن یافت نشد (R.font.vazirmatn مقدار null بازگرداند). از فونت پیش‌فرض سیستم استفاده می‌شود.")
+                fontLoadFailed = true
+                Typeface.DEFAULT
+            } else {
+                tf
+            }
         } catch (e: Exception) {
+            Log.e("PdfExportUtil", "خطا در بارگذاری فونت وزیرمتن (R.font.vazirmatn): ${e.message}", e)
+            fontLoadFailed = true
             Typeface.DEFAULT
         }
 
@@ -56,6 +66,15 @@ object PdfExportUtil {
         var pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNumber).create()
         var page = pdfDoc.startPage(pageInfo)
         var canvas = page.canvas
+
+        if (fontLoadFailed) {
+            val warnPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                typeface = vazirTypeface
+                textSize = 8f
+                color = Color.parseColor("#DC2626")
+            }
+            drawRtlText(canvas, "توجه: فونت اختصاصی برنامه بارگذاری نشد؛ از قلم پیش‌فرض سیستم برای تولید گزارش استفاده شده است.", MARGIN_LEFT, 12f, warnPaint, CONTENT_WIDTH)
+        }
 
         // 1. First Page Header
         drawFirstPageHeader(

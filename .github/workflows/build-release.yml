@@ -46,15 +46,12 @@ jobs:
           sed -i -e 's/\r$//' gradlew || true
           chmod +x gradlew
 
-      - name: Restore Debug Keystore if needed
+      - name: Restore Debug Keystore
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
-          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
-            base64 --decode debug.keystore.base64 > debug.keystore 2>/dev/null || base64 -d debug.keystore.base64 > debug.keystore
-          fi
-          if [ ! -f "debug.keystore" ]; then
-            echo "Generating fallback debug.keystore..."
-            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null || true
-          fi
+          chmod +x .github/scripts/restore-debug-keystore.sh
+          .github/scripts/restore-debug-keystore.sh test
 
       - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest --no-configuration-cache --stacktrace
@@ -96,20 +93,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # 1. Restore static debug.keystore (from Secret or repo base64, never random keytool)
-          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
-            echo "Restoring debug.keystore from DEBUG_KEYSTORE_BASE64 secret..."
-            echo "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/debug.keystore" 2>/dev/null || echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/debug.keystore"
-          elif [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
-            echo "Restoring debug.keystore from repository debug.keystore.base64..."
-            base64 --decode debug.keystore.base64 > debug.keystore 2>/dev/null || base64 -d debug.keystore.base64 > debug.keystore
-          fi
-          if [ ! -f "debug.keystore" ]; then
-            echo "Generating fallback debug.keystore..."
-            keytool -genkey -v -keystore "$GITHUB_WORKSPACE/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null || true
-          fi
+          chmod +x .github/scripts/restore-debug-keystore.sh
+          .github/scripts/restore-debug-keystore.sh build
           
-          # 2. Check release signing secrets
+          # Check release signing secrets
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Decoding release keystore from KEYSTORE_BASE64..."
             echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release.keystore" 2>/dev/null || echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
@@ -117,10 +104,11 @@ jobs:
               echo "::error::KEYSTORE_BASE64 is provided but base64 decoding failed or produced an empty file!"
               exit 1
             fi
+            cp "$GITHUB_WORKSPACE/release.keystore" "$GITHUB_WORKSPACE/my-upload-key.jks" 2>/dev/null || true
             echo "has_release_keystore=true" >> $GITHUB_OUTPUT
             echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
             echo "STORE_PASSWORD=$STORE_PASSWORD" >> $GITHUB_ENV
-            echo "KEY_ALIAS=$KEY_ALIAS" >> $GITHUB_ENV
+            echo "KEY_ALIAS=${KEY_ALIAS:-upload}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           else
             echo "has_release_keystore=false" >> $GITHUB_OUTPUT
@@ -132,31 +120,26 @@ jobs:
       - name: Determine Version Info
         id: version_info
         run: |
-          # Fetch all remote tags to accurately determine previous versions
           git fetch --tags --force 2>/dev/null || true
 
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
             VERSION_NAME="${TAG#v}"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
+            IS_RELEASE="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.create_release }}" == "true" && -n "${{ inputs.release_tag }}" ]]; then
             TAG="${{ inputs.release_tag }}"
             VERSION_NAME="${TAG#v}"
+            IS_RELEASE="true"
           else
-            # Calculate next auto-incremented version based on latest existing tag
+            # Regular push to main branch: do NOT create tags or auto-increment releases
             LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
-            if [ -z "$LATEST_TAG" ]; then
-              TAG="v1.0.1"
-              VERSION_NAME="1.0.1"
+            if [ -n "$LATEST_TAG" ]; then
+              VERSION_NAME="${LATEST_TAG#v}-dev"
             else
-              CLEAN_TAG="${LATEST_TAG#v}"
-              MAJOR=$(echo "$CLEAN_TAG" | cut -d. -f1)
-              MINOR=$(echo "$CLEAN_TAG" | cut -d. -f2)
-              PATCH=$(echo "$CLEAN_TAG" | cut -d. -f3)
-              if [ -z "$PATCH" ]; then PATCH=0; fi
-              NEXT_PATCH=$((PATCH + 1))
-              TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
-              VERSION_NAME="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+              VERSION_NAME="1.0.0-dev"
             fi
+            TAG=""
+            IS_RELEASE="false"
           fi
           
           COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 1)
@@ -165,17 +148,18 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
           echo "version_code=$COMMIT_COUNT" >> $GITHUB_OUTPUT
+          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
 
       - name: Build APK (Release or Debug)
         run: |
           mkdir -p artifacts
           if [ "${{ steps.prep_signing.outputs.has_release_keystore }}" == "true" ]; then
-            echo "Building signed Release APK..."
-            ./gradlew assembleRelease --no-configuration-cache --stacktrace
+            echo "Building signed Release APK with versionCode=$VERSION_CODE, versionName=$VERSION_NAME..."
+            ./gradlew assembleRelease -PVERSION_CODE=$VERSION_CODE -PVERSION_NAME=$VERSION_NAME --no-configuration-cache --stacktrace
             APK_FILE=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)
           else
-            echo "Building Debug APK with persistent keystore signature..."
-            ./gradlew assembleDebug --no-configuration-cache --stacktrace
+            echo "Building Debug APK with versionCode=$VERSION_CODE, versionName=$VERSION_NAME..."
+            ./gradlew assembleDebug -PVERSION_CODE=$VERSION_CODE -PVERSION_NAME=$VERSION_NAME --no-configuration-cache --stacktrace
             APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" 2>/dev/null | head -n 1)
           fi
           
@@ -184,13 +168,57 @@ jobs:
           fi
           
           if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
-            cp "$APK_FILE" "artifacts/KarYar-App-${{ steps.version_info.outputs.tag }}.apk"
+            if [ "${{ steps.version_info.outputs.is_release }}" == "true" ] && [ -n "${{ steps.version_info.outputs.tag }}" ]; then
+              cp "$APK_FILE" "artifacts/KarYar-${{ steps.version_info.outputs.tag }}.apk"
+            else
+              cp "$APK_FILE" "artifacts/KarYar-${{ steps.version_info.outputs.version_name }}.apk"
+            fi
             cp "$APK_FILE" artifacts/WorkerManager-App.apk
-            echo "Generated APK: artifacts/KarYar-App-${{ steps.version_info.outputs.tag }}.apk"
+            echo "Generated APK artifacts:"
             ls -lh artifacts/
           else
             echo "::error::No APK file found after build!"
             exit 1
+          fi
+
+      - name: Verify APK Version Info
+        run: |
+          echo "Verifying version metadata in generated APK..."
+          APK_FILE=$(find artifacts -name "*.apk" 2>/dev/null | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "::error::No APK found in artifacts directory!"
+            exit 1
+          fi
+          
+          AAPT2_BIN=$(find $ANDROID_HOME/build-tools -name aapt2 2>/dev/null | sort -V | tail -n 1)
+          APK_VNAME=""
+          APK_VCODE=""
+          if [ -n "$AAPT2_BIN" ] && [ -x "$AAPT2_BIN" ]; then
+            echo "Using AAPT2 at: $AAPT2_BIN"
+            $AAPT2_BIN dump badging "$APK_FILE" | grep -E "package: name=" || true
+            APK_VNAME=$($AAPT2_BIN dump badging "$APK_FILE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+            APK_VCODE=$($AAPT2_BIN dump badging "$APK_FILE" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
+          fi
+          
+          if [ -z "$APK_VNAME" ]; then
+            APK_ANALYZER=$(find $ANDROID_HOME/cmdline-tools -name apkanalyzer 2>/dev/null | sort -V | tail -n 1)
+            if [ -n "$APK_ANALYZER" ] && [ -x "$APK_ANALYZER" ]; then
+              echo "Using APKAnalyzer at: $APK_ANALYZER"
+              APK_VNAME=$($APK_ANALYZER manifest version-name "$APK_FILE" 2>/dev/null || true)
+              APK_VCODE=$($APK_ANALYZER manifest version-code "$APK_FILE" 2>/dev/null || true)
+            fi
+          fi
+          
+          echo "APK internal versionCode: $APK_VCODE (Expected: $VERSION_CODE)"
+          echo "APK internal versionName: $APK_VNAME (Expected: $VERSION_NAME)"
+          
+          if [ "${{ steps.version_info.outputs.is_release }}" == "true" ] && [ -n "${{ steps.version_info.outputs.tag }}" ]; then
+            EXPECTED_TAG_VNAME="${{ steps.version_info.outputs.version_name }}"
+            if [ "$APK_VNAME" != "$EXPECTED_TAG_VNAME" ]; then
+              echo "::error::Version mismatch! APK contains versionName='$APK_VNAME' but release tag expects '$EXPECTED_TAG_VNAME'!"
+              exit 1
+            fi
+            echo "Verification PASSED: APK internal version perfectly matches tag ($EXPECTED_TAG_VNAME)."
           fi
 
       - name: Upload APK Artifact
@@ -200,20 +228,21 @@ jobs:
           path: artifacts/WorkerManager-App.apk
           retention-days: 30
 
-      - name: Create or Update GitHub Release
+      - name: Create GitHub Release
+        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && steps.prep_signing.outputs.has_release_keystore == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}
-          name: نسخه ${{ steps.version_info.outputs.tag }} - برنامه کار‌یار
+          name: نسخه ${{ steps.version_info.outputs.tag }} - برنامه مدیریت کارگران KarYar
           body: |
-            ### 📱 فایل نصبی برنامه مدیریت کارگران و کارگاه (KarYar)
+            ### 📱 فایل نصبی رسمی اندروید (Release APK)
             - **نسخه (Version Name):** `${{ steps.version_info.outputs.version_name }}`
             - **کد نسخه (Version Code):** `${{ steps.version_info.outputs.version_code }}`
+            - **وضعیت امضا:** امضاشده با کلید اختصاصی و رسمی انتشار (Release Keystore)
             
-            📥 جهت دانلود و نصب روی گوشی اندروید، فایل `KarYar-App-${{ steps.version_info.outputs.tag }}.apk` را از بخش Assets در زیر دانلود نمایید.
-            این فایل با همان کلید امضای ثابت امضا شده و به عنوان به‌روزرسانی نسخه‌های قبلی بدون نیاز به حذف نسخه قبل قابل نصب است.
+            📥 جهت دانلود و نصب روی گوشی اندروید، فایل `KarYar-${{ steps.version_info.outputs.tag }}.apk` را از بخش Assets در پایین دانلود نمایید.
           files: |
-            artifacts/KarYar-App-${{ steps.version_info.outputs.tag }}.apk
+            artifacts/KarYar-${{ steps.version_info.outputs.tag }}.apk
             artifacts/WorkerManager-App.apk
           draft: false
           prerelease: false
