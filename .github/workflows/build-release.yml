@@ -13,9 +13,9 @@ on:
         description: 'ایجاد ریلیز در گیت‌هاب (Create GitHub Release)'
         required: false
         type: boolean
-        default: false
+        default: true
       release_tag:
-        description: 'تگ نسخه (اختیاری، مثلاً v1.0.1)'
+        description: 'تگ نسخه اختیاری (در صورت خالی بودن، نسخه به طور خودکار افزایش می‌یابد)'
         required: false
         type: string
         default: ''
@@ -95,7 +95,7 @@ jobs:
         run: |
           chmod +x .github/scripts/restore-debug-keystore.sh
           .github/scripts/restore-debug-keystore.sh build
-          
+
           # Check release signing secrets
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Decoding release keystore from KEYSTORE_BASE64..."
@@ -112,37 +112,50 @@ jobs:
             echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           else
             echo "has_release_keystore=false" >> $GITHUB_OUTPUT
-            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-              echo "::warning::Workflow triggered on release tag '${{ github.ref }}', but KEYSTORE_BASE64 is missing! Only debug APK artifact will be uploaded. Public GitHub Release will NOT be created without a release keystore."
-            fi
+            echo "::notice::KEYSTORE_BASE64 is not configured; using standard signing key for build."
           fi
 
-      - name: Determine Version Info
+      - name: Determine Version Info (Auto-Increment)
         id: version_info
         run: |
           git fetch --tags --force 2>/dev/null || true
 
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Manually pushed release tag
             TAG="${GITHUB_REF#refs/tags/}"
             VERSION_NAME="${TAG#v}"
             IS_RELEASE="true"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.create_release }}" == "true" && -n "${{ inputs.release_tag }}" ]]; then
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
+            # Manual workflow dispatch with specific tag
             TAG="${{ inputs.release_tag }}"
             VERSION_NAME="${TAG#v}"
             IS_RELEASE="true"
           else
-            # Regular push to main branch: do NOT create tags or auto-increment releases
+            # Push to main/master: Auto-increment patch version based on latest existing tag
             LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
-            if [ -n "$LATEST_TAG" ]; then
-              VERSION_NAME="${LATEST_TAG#v}-dev"
+            if [ -z "$LATEST_TAG" ]; then
+              VERSION_NAME="1.0.1"
             else
-              VERSION_NAME="1.0.0-dev"
+              RAW_VER="${LATEST_TAG#v}"
+              MAJOR=$(echo "$RAW_VER" | cut -d. -f1)
+              MINOR=$(echo "$RAW_VER" | cut -d. -f2)
+              PATCH=$(echo "$RAW_VER" | cut -d. -f3)
+              MAJOR=${MAJOR:-1}
+              MINOR=${MINOR:-0}
+              PATCH=${PATCH:-0}
+              NEW_PATCH=$((PATCH + 1))
+              VERSION_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
             fi
-            TAG=""
-            IS_RELEASE="false"
+            TAG="v${VERSION_NAME}"
+            IS_RELEASE="true"
+            echo "Auto-incremented release version: $TAG (previous: ${LATEST_TAG:-none})"
           fi
-          
+
           COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+          if [ -z "$COMMIT_COUNT" ] || [ "$COMMIT_COUNT" -le 0 ]; then
+            COMMIT_COUNT=1
+          fi
+
           echo "VERSION_CODE=$COMMIT_COUNT" >> $GITHUB_ENV
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -162,17 +175,14 @@ jobs:
             ./gradlew assembleDebug -PVERSION_CODE=$VERSION_CODE -PVERSION_NAME=$VERSION_NAME --no-configuration-cache --stacktrace
             APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" 2>/dev/null | head -n 1)
           fi
-          
+
           if [ -z "$APK_FILE" ]; then
             APK_FILE=$(find app/build/outputs/apk -name "*.apk" 2>/dev/null | head -n 1)
           fi
-          
+
           if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
-            if [ "${{ steps.version_info.outputs.is_release }}" == "true" ] && [ -n "${{ steps.version_info.outputs.tag }}" ]; then
-              cp "$APK_FILE" "artifacts/KarYar-${{ steps.version_info.outputs.tag }}.apk"
-            else
-              cp "$APK_FILE" "artifacts/KarYar-${{ steps.version_info.outputs.version_name }}.apk"
-            fi
+            cp "$APK_FILE" "artifacts/KarYar-${{ steps.version_info.outputs.tag }}.apk"
+            cp "$APK_FILE" artifacts/KarYar-Latest.apk
             cp "$APK_FILE" artifacts/WorkerManager-App.apk
             echo "Generated APK artifacts:"
             ls -lh artifacts/
@@ -189,7 +199,7 @@ jobs:
             echo "::error::No APK found in artifacts directory!"
             exit 1
           fi
-          
+
           AAPT2_BIN=$(find $ANDROID_HOME/build-tools -name aapt2 2>/dev/null | sort -V | tail -n 1)
           APK_VNAME=""
           APK_VCODE=""
@@ -199,7 +209,7 @@ jobs:
             APK_VNAME=$($AAPT2_BIN dump badging "$APK_FILE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
             APK_VCODE=$($AAPT2_BIN dump badging "$APK_FILE" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
           fi
-          
+
           if [ -z "$APK_VNAME" ]; then
             APK_ANALYZER=$(find $ANDROID_HOME/cmdline-tools -name apkanalyzer 2>/dev/null | sort -V | tail -n 1)
             if [ -n "$APK_ANALYZER" ] && [ -x "$APK_ANALYZER" ]; then
@@ -208,10 +218,10 @@ jobs:
               APK_VCODE=$($APK_ANALYZER manifest version-code "$APK_FILE" 2>/dev/null || true)
             fi
           fi
-          
+
           echo "APK internal versionCode: $APK_VCODE (Expected: $VERSION_CODE)"
           echo "APK internal versionName: $APK_VNAME (Expected: $VERSION_NAME)"
-          
+
           if [ "${{ steps.version_info.outputs.is_release }}" == "true" ] && [ -n "${{ steps.version_info.outputs.tag }}" ]; then
             EXPECTED_TAG_VNAME="${{ steps.version_info.outputs.version_name }}"
             if [ "$APK_VNAME" != "$EXPECTED_TAG_VNAME" ]; then
@@ -224,28 +234,51 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WorkerManager-APK
-          path: artifacts/WorkerManager-App.apk
+          name: KarYar-APK
+          path: artifacts/KarYar-Latest.apk
           retention-days: 30
 
       - name: Create GitHub Release
-        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && steps.prep_signing.outputs.has_release_keystore == 'true'
+        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}
-          name: نسخه ${{ steps.version_info.outputs.tag }} - برنامه مدیریت کارگران KarYar
+          target_commitish: ${{ github.sha }}
+          name: نسخه ${{ steps.version_info.outputs.tag }} - برنامه کاریار KarYar
           body: |
-            ### 📱 فایل نصبی رسمی اندروید (Release APK)
+            ### 📱 فایل نصبی رسمی اندروید (KarYar APK)
             - **نسخه (Version Name):** `${{ steps.version_info.outputs.version_name }}`
             - **کد نسخه (Version Code):** `${{ steps.version_info.outputs.version_code }}`
-            - **وضعیت امضا:** امضاشده با کلید اختصاصی و رسمی انتشار (Release Keystore)
+            - **وضعیت امضا:** ${{ steps.prep_signing.outputs.has_release_keystore == 'true' && 'امضاشده با کلید اختصاصی انتشار (Release Keystore)' || 'امضاشده با کلید استاندارد بیلد' }}
             
-            📥 جهت دانلود و نصب روی گوشی اندروید، فایل `KarYar-${{ steps.version_info.outputs.tag }}.apk` را از بخش Assets در پایین دانلود نمایید.
+            📥 جهت دانلود و نصب روی گوشی اندروید، فایل `KarYar-${{ steps.version_info.outputs.tag }}.apk` را از بخش Assets در زیر دانلود نمایید.
           files: |
             artifacts/KarYar-${{ steps.version_info.outputs.tag }}.apk
+            artifacts/KarYar-Latest.apk
             artifacts/WorkerManager-App.apk
           draft: false
           prerelease: false
           make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prune Old Releases (Keep only latest 5)
+        if: steps.version_info.outputs.is_release == 'true'
+        run: |
+          echo "Checking existing releases to keep only the 5 most recent versions..."
+          # gh release list returns releases ordered newest first.
+          # We use jq to extract all releases from index 5 onward (i.e. older than top 5).
+          OLD_RELEASES=$(gh release list --limit 100 --json tagName --jq '.[5:][].tagName' 2>/dev/null || true)
+          if [ -n "$OLD_RELEASES" ]; then
+            echo "Found older releases to prune (keeping latest 5):"
+            echo "$OLD_RELEASES"
+            for old_tag in $OLD_RELEASES; do
+              echo "Pruning old release and tag: $old_tag"
+              gh release delete "$old_tag" --cleanup-tag --yes 2>/dev/null || gh release delete "$old_tag" --yes 2>/dev/null || echo "Could not delete $old_tag"
+            done
+            echo "Successfully pruned older releases. Exactly the 5 latest releases are kept."
+          else
+            echo "Total releases count is 5 or fewer. No pruning needed."
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
