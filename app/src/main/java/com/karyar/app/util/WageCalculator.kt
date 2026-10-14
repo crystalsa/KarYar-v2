@@ -32,19 +32,22 @@ import kotlin.math.floor
  * 5. Hourly (ساعتی):
  *    - Hourly pay is roundToLong(hours * rate).
  *    - Overtime is calculated when overtimeHours > 0 and worker is not absent.
- * 6. Zero capping (قانون سقف صفر coerceAtLeast(0)):
- *    - Minimum net payout cap of 0 is applied ONLY ONCE to the final cumulative total of each worker:
- *      (grossTotal - deductionsTotal).coerceAtLeast(0L).
- *    - It is NEVER applied on individual days before summing. DayCalculationResult.netPayout is provided
- *      strictly for isolated single-day UI display and is NOT used when computing cumulative totals,
- *      preventing distortion when a worker has negative daily balances (e.g. absent day with deductions).
+ * 6. Zero capping and Daily vs Settlement Consistency (قانون هماهنگی دستمزد روزانه با تسویه نهایی):
+ *    - DayCalculationResult.netPayout reflects the true net daily balance (gross - totalDeductions),
+ *      allowing negative values when daily deductions exceed daily earnings (e.g. absent days with fixed deductions).
+ *    - DayCalculationResult.clampedNetPayout provides the >= 0 display value where strictly non-negative display is required.
+ *    - This guarantees that the sum of daily net payouts across all days equals the cumulative worker performance!
+ *    - Minimum net payout cap of 0 is applied to the final cumulative settlement of each worker:
+ *      (grossTotal - deductionsTotal - groupExpenseShare).coerceAtLeast(0L).
  * 7. Unified Financial Engine (مسیر محاسباتی یکپارچه):
  *    - calculateFinancialSummary serves as the single calculation engine for DashboardAnalytics,
  *      workerPerformances, and grand project totals.
  *    - grandTotalProjectCost strictly equals the sum of netPayoutBeforeGroup across all workers.
  *    - Deductions on absent days are treated identically in analytics, dailyBookkeeping, and workerPerformances.
- * 8. Expenses (هزینه‌ها):
- *    - GROUP expenses are divided equally among workers who worked at least one shift.
+ * 8. Expenses and Remainder Distribution (هزینه‌ها و باقیمانده تقسیم هزینه‌های گروهی):
+ *    - GROUP expenses are divided among workers who worked at least one shift, with the remainder (باقیمانده تقسیم)
+ *      deterministically distributed so that sum(groupExpenseShare) == totalGroupExpenses without losing any remainder.
+ *    - In daily bookkeeping (calculateDailyBookkeeping), workshop group expenses are deducted directly from the day's final cost.
  *    - INDIVIDUAL expenses are added/deducted strictly by workerId (never by workerName).
  */
 object WageCalculator {
@@ -231,7 +234,8 @@ object WageCalculator {
                 overtimePay = 0L,
                 totalAllowances = 0L,
                 totalDeductions = totalDeductions,
-                netPayout = 0L,
+                netPayout = -totalDeductions,
+                clampedNetPayout = 0L,
                 transitAllowance = 0L,
                 foodAllowance = 0L,
                 accommodationAllowance = 0L,
@@ -300,9 +304,9 @@ object WageCalculator {
         val totalAllowances = transitAllowance + foodAllowance + accomAllowance + medAllowance
         val totalDeductions = transitDeduction + foodDeduction + accomDeduction + medDeduction
 
-        // 6. Net Payout for single-day display only
+        // 6. Net Payout for single-day (preserves negative daily balance when deductions > gross)
         val gross = baseWage + hourlyPay + overtimePay + totalAllowances
-        val net = (gross - totalDeductions).coerceAtLeast(0L)
+        val rawNet = gross - totalDeductions
 
         return DayCalculationResult(
             isWorkingDay = true,
@@ -314,7 +318,8 @@ object WageCalculator {
             overtimePay = overtimePay,
             totalAllowances = totalAllowances,
             totalDeductions = totalDeductions,
-            netPayout = net,
+            netPayout = rawNet,
+            clampedNetPayout = rawNet.coerceAtLeast(0L),
             transitAllowance = transitAllowance,
             foodAllowance = foodAllowance,
             accommodationAllowance = accomAllowance,
@@ -328,12 +333,21 @@ object WageCalculator {
 
     /**
      * Calculates the exact net daily payout for a worker on a specific date.
+     * By default, returns the true daily balance (gross - deductions), which can be negative
+     * if deductions exceed daily gross earnings, ensuring that:
+     * sum of calculateDayPayout across all days == worker's cumulative net earnings.
+     *
+     * Set [coerceNonNegative] = true if a strictly non-negative display value is required.
      */
     fun calculateDayPayout(
         worker: WorkerEntity,
         att: AttendanceEntity?,
-        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER
-    ): Long = calculateDay(worker, att, overtimeMultiplier).netPayout
+        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER,
+        coerceNonNegative: Boolean = false
+    ): Long {
+        val result = calculateDay(worker, att, overtimeMultiplier)
+        return if (coerceNonNegative) result.clampedNetPayout else result.netPayout
+    }
 
     /**
      * Aggregates all attendance records and individual expenses for a single worker into a [WorkerPerformance].
@@ -416,8 +430,10 @@ object WageCalculator {
         val totalDeductions = transitDeductionTotal + foodDeductionTotal + accomDeductionTotal + medDeductionTotal
 
         val gross = baseWageTotal + hourlyPayTotal + otPayTotal + totalAllowances
-        val netBeforeGroup = (gross - totalDeductions).coerceAtLeast(0L)
-        val finalNet = (gross - totalDeductions - groupExpenseShare).coerceAtLeast(0L)
+        val rawNetBeforeGroup = gross - totalDeductions
+        val rawFinalNet = gross - totalDeductions - groupExpenseShare
+        val netBeforeGroup = rawNetBeforeGroup.coerceAtLeast(0L)
+        val finalNet = rawFinalNet.coerceAtLeast(0L)
 
         return WorkerPerformance(
             worker = worker,
@@ -444,8 +460,30 @@ object WageCalculator {
             medicalDeductionTotal = medDeductionTotal,
             groupExpenseShare = groupExpenseShare,
             netPayoutBeforeGroup = netBeforeGroup,
-            netPayout = finalNet
+            netPayout = finalNet,
+            rawNetPayoutBeforeGroup = rawNetBeforeGroup,
+            rawNetPayout = rawFinalNet
         )
+    }
+
+    /**
+     * Distributes workshop group expenses among eligible attendees with deterministic allocation of the remainder.
+     * Rule: If totalGroupExpenses = 100,000 and count = 3, base is 33,333 and remainder is 1.
+     * The first remainder workers receive base + 1 so that sum of shares strictly equals totalGroupExpenses.
+     */
+    fun calculateGroupExpenseShares(
+        totalGroupExpenses: Long,
+        eligibleWorkers: List<WorkerEntity>
+    ): Map<Long, Long> {
+        if (eligibleWorkers.isEmpty() || totalGroupExpenses <= 0L) return emptyMap()
+        val count = eligibleWorkers.size
+        val baseShare = totalGroupExpenses / count
+        val remainder = totalGroupExpenses % count
+        val sortedWorkers = eligibleWorkers.sortedBy { it.id }
+        return sortedWorkers.mapIndexed { index, worker ->
+            val extra = if (index < remainder) 1L else 0L
+            worker.id to (baseShare + extra)
+        }.toMap()
     }
 
     /**
@@ -467,7 +505,8 @@ object WageCalculator {
             attendances.any { it.workerId == worker.id && it.status != AttendanceStatus.ABSENT }
         }
         val presentWorkerCount = workersWithShifts.size
-        val sharePerWorker = if (presentWorkerCount > 0) totalGroupExpenses / presentWorkerCount else 0L
+        val groupExpenseShares = calculateGroupExpenseShares(totalGroupExpenses, workersWithShifts)
+        val groupExpenseRemainder = if (presentWorkerCount > 0) totalGroupExpenses % presentWorkerCount else 0L
 
         val performances = workers.map { worker ->
             val workerAtts = attendances.filter { it.workerId == worker.id }
@@ -478,7 +517,7 @@ object WageCalculator {
                 worker = worker,
                 attendances = workerAtts,
                 individualExpenses = workerIndivExpenses,
-                groupExpenseShare = if (worker in workersWithShifts) sharePerWorker else 0L,
+                groupExpenseShare = groupExpenseShares[worker.id] ?: 0L,
                 overtimeMultiplier = overtimeMultiplier
             )
         }
@@ -526,6 +565,7 @@ object WageCalculator {
             totalOtherExpenses = totalOtherExpenses,
             totalIndividualExpenses = totalIndividualExpenses,
             totalGroupExpenses = totalGroupExpenses,
+            groupExpenseRemainder = groupExpenseRemainder,
             grandTotalExpenses = grandTotalExpenses
         )
     }
@@ -533,6 +573,8 @@ object WageCalculator {
     /**
      * Unified daily bookkeeping calculation for a specific date.
      * Uses the exact same rules as the overall project analytics.
+     * Group expenses of the workshop on this day are directly deducted from the day's final net cost,
+     * ensuring full consistency between daily totals and project-wide worker settlements.
      */
     fun calculateDailyBookkeeping(
         dateStr: String,
@@ -577,8 +619,12 @@ object WageCalculator {
             }
         }
 
+        val dailyIndivExpenses = dayExps.filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) }.sumOf { it.amount }
+        val dailyGroupExpenses = dayExps.filter { it.scope.equals("GROUP", ignoreCase = true) }.sumOf { it.amount }
         val dailyExpenses = dayExps.sumOf { it.amount }
-        val grandDailyCost = (wages + hourlyPay + overtimePay + allowances - deductions).coerceAtLeast(0L)
+
+        // Deduct workshop group expenses directly from the day's final cost
+        val grandDailyCost = (wages + hourlyPay + overtimePay + allowances - deductions - dailyGroupExpenses).coerceAtLeast(0L)
 
         return DailyBookkeeping(
             date = dateStr,
@@ -588,6 +634,8 @@ object WageCalculator {
             totalHourlyPay = hourlyPay,
             totalOvertimePay = overtimePay,
             dailyExpenses = dailyExpenses,
+            groupExpenses = dailyGroupExpenses,
+            individualExpenses = dailyIndivExpenses,
             workersPresent = presentCount,
             totalHours = hours,
             transitCost = dayExps.filter { it.category.equals("TRANSIT", ignoreCase = true) }.sumOf { it.amount },
@@ -614,6 +662,7 @@ data class DayCalculationResult(
     val totalAllowances: Long,
     val totalDeductions: Long,
     val netPayout: Long,
+    val clampedNetPayout: Long = netPayout.coerceAtLeast(0L),
     val transitAllowance: Long = 0L,
     val foodAllowance: Long = 0L,
     val accommodationAllowance: Long = 0L,
@@ -622,7 +671,9 @@ data class DayCalculationResult(
     val foodDeduction: Long = 0L,
     val accommodationDeduction: Long = 0L,
     val medicalDeduction: Long = 0L
-)
+) {
+    val rawNetPayout: Long get() = netPayout
+}
 
 /**
  * Aggregated financial summary across all workers and expenses in a project.
@@ -647,6 +698,7 @@ data class FinancialSummary(
     val totalOtherExpenses: Long,
     val totalIndividualExpenses: Long,
     val totalGroupExpenses: Long,
+    val groupExpenseRemainder: Long = 0L,
     val grandTotalExpenses: Long
 ) {
     companion object {
@@ -670,6 +722,7 @@ data class FinancialSummary(
             totalOtherExpenses = 0L,
             totalIndividualExpenses = 0L,
             totalGroupExpenses = 0L,
+            groupExpenseRemainder = 0L,
             grandTotalExpenses = 0L
         )
     }

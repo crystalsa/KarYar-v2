@@ -176,7 +176,8 @@ class WageCalculatorTest {
         assertEquals(0L, result.overtimePay)
         assertEquals(0L, result.totalAllowances)
         assertEquals(30_000L, result.totalDeductions) // Deductions apply to absent workers
-        assertEquals(0L, result.netPayout)
+        assertEquals(-30_000L, result.netPayout) // True daily balance reflects deduction
+        assertEquals(0L, result.clampedNetPayout) // Clamped non-negative version
     }
 
     // 9. Notes containing "غیبت" in a present day's explanation must NOT make the worker absent
@@ -388,7 +389,9 @@ class WageCalculatorTest {
             regularHours = 8.0
         )
         val result = WageCalculator.calculateDay(worker, att)
-        assertEquals(0L, result.netPayout)
+        assertEquals(-300_000L, result.netPayout)
+        assertEquals(0L, result.clampedNetPayout)
+        assertEquals(0L, WageCalculator.calculateDayPayout(worker, att, coerceNonNegative = true))
     }
 
     // 20. Rounding verification with roundToLong (no truncate error)
@@ -553,14 +556,20 @@ class WageCalculatorTest {
 
         val resAbsent = WageCalculator.calculateDay(worker, dayAbsent)
         val resPresent = WageCalculator.calculateDay(worker, dayPresent)
-        assertEquals(0L, resAbsent.netPayout) // Daily display is clamped to 0
+        assertEquals(-100_000L, resAbsent.netPayout) // Raw daily net reflects true negative deduction balance
+        assertEquals(0L, resAbsent.clampedNetPayout)  // Clamped >= 0 version for non-negative display
         assertEquals(200_000L, resPresent.netPayout)
 
         // Cumulative: gross (300k) - total deductions (100k + 100k = 200k) = 100,000L
         val perf = WageCalculator.calculateWorkerPerformance(worker, listOf(dayAbsent, dayPresent))
         assertEquals(300_000L, perf.baseWageTotal)
         assertEquals(200_000L, perf.totalDeductions)
-        assertEquals(100_000L, perf.netPayout) // 100,000L, NOT 200,000L from summing daily nets!
+        assertEquals(100_000L, perf.netPayout)
+
+        // Consistency: Sum of daily net payouts strictly equals cumulative netPayout!
+        val sumOfDailyNets = resAbsent.netPayout + resPresent.netPayout
+        assertEquals(100_000L, sumOfDailyNets)
+        assertEquals(perf.netPayout, sumOfDailyNets)
 
         // If total deductions exceed total gross, worker cumulative net is capped at 0
         val workerHighDeductions = worker.copy(
@@ -568,6 +577,7 @@ class WageCalculatorTest {
         )
         val perfCapped = WageCalculator.calculateWorkerPerformance(workerHighDeductions, listOf(dayAbsent, dayPresent))
         assertEquals(0L, perfCapped.netPayout)
+        assertEquals(-200_000L, perfCapped.rawNetPayout)
     }
 
     // 26. Unified FinancialSummary: grandTotalProjectCost strictly equals sum of netPayoutBeforeGroup
@@ -655,5 +665,112 @@ class WageCalculatorTest {
         // Absent worker does NOT get group expense share
         assertEquals(0L, perfAbsent.groupExpenseShare)
         assertEquals(0L, perfAbsent.netPayout)
+    }
+
+    // 28. Problem 1 Verification: Daily bookkeeping directly deducts workshop group expenses
+    @Test
+    fun testDailyBookkeeping_directGroupExpenseDeduction() {
+        val workerA = baseDailyWorker.copy(id = 601L, baseDailyWage = 500_000L)
+        val workerB = baseDailyWorker.copy(id = 602L, baseDailyWage = 500_000L)
+
+        val attA = AttendanceEntity(workerId = 601L, date = "1405/01/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0)
+        val attB = AttendanceEntity(workerId = 602L, date = "1405/01/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0)
+
+        val groupExpense = com.karyar.app.data.local.entity.ExpenseEntity(
+            id = 10L, folderId = 10L, title = "هزینه ناهار گروهی کارگاه", category = "FOOD",
+            scope = "GROUP", amount = 100_000L, date = "1405/01/01"
+        )
+        val indivExpense = com.karyar.app.data.local.entity.ExpenseEntity(
+            id = 11L, folderId = 10L, title = "مساعده کارگر A", category = "OTHER",
+            scope = "INDIVIDUAL", impactType = "DEDUCTION", workerId = 601L, amount = 50_000L, date = "1405/01/01"
+        )
+
+        val daily = WageCalculator.calculateDailyBookkeeping(
+            dateStr = "1405/01/01",
+            workers = listOf(workerA, workerB),
+            attendances = listOf(attA, attB),
+            expenses = listOf(groupExpense, indivExpense)
+        )
+
+        assertEquals(1_000_000L, daily.totalDailyWages) // 500k + 500k
+        assertEquals(150_000L, daily.dailyExpenses)     // 100k group + 50k indiv
+        assertEquals(100_000L, daily.groupExpenses)     // 100k group
+        assertEquals(50_000L, daily.individualExpenses) // 50k indiv
+        assertEquals(2, daily.workersPresent)
+
+        // Wages (1,000,000) - Deductions (50,000) - Group Expense (100,000) = 850,000L
+        assertEquals(850_000L, daily.grandDailyCost)
+
+        // Consistency check: The sum of worker performances matches grandDailyCost!
+        val summary = WageCalculator.calculateFinancialSummary(
+            workers = listOf(workerA, workerB),
+            attendances = listOf(attA, attB),
+            expenses = listOf(groupExpense, indivExpense),
+            todayStr = "1405/01/01"
+        )
+        val sumOfWorkerNetPayouts = summary.workerPerformances.sumOf { it.netPayout }
+        assertEquals(daily.grandDailyCost, sumOfWorkerNetPayouts)
+    }
+
+    // 29. Problem 2 Verification: Remainder of group expense division is fully distributed without loss
+    @Test
+    fun testGroupExpenseRemainder_splitEquallyWithRemainderDistributed() {
+        val worker1 = baseDailyWorker.copy(id = 1L)
+        val worker2 = baseDailyWorker.copy(id = 2L)
+        val worker3 = baseDailyWorker.copy(id = 3L)
+
+        // 100,000 Tomans divided among 3 workers: 33,333 each with remainder 1
+        val shares = WageCalculator.calculateGroupExpenseShares(100_000L, listOf(worker1, worker2, worker3))
+        assertEquals(3, shares.size)
+        // First worker (by sorted ID) gets the remainder: 33,334
+        assertEquals(33_334L, shares[1L])
+        assertEquals(33_333L, shares[2L])
+        assertEquals(33_333L, shares[3L])
+
+        // Sum of worker shares strictly equals the original 100,000L!
+        assertEquals(100_000L, shares.values.sum())
+
+        // Also test with 7 workers and 100,000 Tomans (100,000 / 7 = 14,285 remainder 5)
+        val sevenWorkers = (1L..7L).map { baseDailyWorker.copy(id = it) }
+        val shares7 = WageCalculator.calculateGroupExpenseShares(100_000L, sevenWorkers)
+        assertEquals(7, shares7.size)
+        assertEquals(100_000L, shares7.values.sum())
+    }
+
+    // 30. Problem 3 Verification: Daily net payout and final settlement are strictly consistent across days
+    @Test
+    fun testDailyNetPayoutAndFinalSettlement_perfectConsistencyAcrossDays() {
+        val worker = baseDailyWorker.copy(
+            id = 10L,
+            baseDailyWage = 400_000L,
+            accommodationAllowance = 150_000L,
+            accommodationImpact = "DEDUCTION"
+        )
+
+        // Day 1: Absent -> gross 0, deduction 150k -> daily net -150k
+        val attDay1 = AttendanceEntity(workerId = 10L, date = "1405/01/01", status = AttendanceStatus.ABSENT)
+        // Day 2: Half-day -> wage 200k, deduction 150k -> daily net +50k
+        val attDay2 = AttendanceEntity(workerId = 10L, date = "1405/01/02", status = AttendanceStatus.HALF_DAY, regularHours = 4.0)
+        // Day 3: Full-day -> wage 400k, deduction 150k -> daily net +250k
+        val attDay3 = AttendanceEntity(workerId = 10L, date = "1405/01/03", status = AttendanceStatus.FULL_DAY, regularHours = 8.0)
+
+        val res1 = WageCalculator.calculateDay(worker, attDay1)
+        val res2 = WageCalculator.calculateDay(worker, attDay2)
+        val res3 = WageCalculator.calculateDay(worker, attDay3)
+
+        assertEquals(-150_000L, res1.netPayout)
+        assertEquals(50_000L, res2.netPayout)
+        assertEquals(250_000L, res3.netPayout)
+
+        val sumDailyNets = res1.netPayout + res2.netPayout + res3.netPayout
+        assertEquals(150_000L, sumDailyNets) // -150k + 50k + 250k = 150k
+
+        val performance = WageCalculator.calculateWorkerPerformance(worker, listOf(attDay1, attDay2, attDay3))
+        assertEquals(600_000L, performance.baseWageTotal)     // 0 + 200k + 400k
+        assertEquals(450_000L, performance.totalDeductions)   // 150k * 3
+        assertEquals(150_000L, performance.netPayout)         // 600k - 450k = 150k
+
+        // The sum of daily numbers strictly matches the final settlement!
+        assertEquals(sumDailyNets, performance.netPayout)
     }
 }

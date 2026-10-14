@@ -34,7 +34,9 @@ data class WorkerPerformance(
 
     val groupExpenseShare: Long = 0L,
     val netPayoutBeforeGroup: Long = 0L,
-    val netPayout: Long
+    val netPayout: Long,
+    val rawNetPayoutBeforeGroup: Long = netPayoutBeforeGroup,
+    val rawNetPayout: Long = netPayout
 ) {
     val individualExpensesTotal: Long
         get() = totalAllowances + totalDeductions

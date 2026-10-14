@@ -75,6 +75,7 @@ fun WorkersScreen(
     val allWorkers by viewModel.workers.collectAsState()
     val performances by viewModel.workerPerformances.collectAsState()
     val attendanceList by viewModel.attendanceList.collectAsState()
+    val expenses by viewModel.expenses.collectAsState()
 
     val dateFolders by viewModel.dateFolders.collectAsState()
     val selectedDateFolder by viewModel.selectedDateFolder.collectAsState()
@@ -205,6 +206,7 @@ fun WorkersScreen(
                         targetDayFolder = targetDayFolder,
                         allWorkers = allWorkers,
                         attendanceList = attendanceList,
+                        expenses = expenses,
                         isExpanded = isDashboardExpanded,
                         onToggleExpanded = { isDashboardExpanded = !isDashboardExpanded }
                     )

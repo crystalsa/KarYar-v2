@@ -12,6 +12,8 @@ data class DailyBookkeeping(
     val totalHourlyPay: Long = 0L,
     val totalOvertimePay: Long = 0L,
     val dailyExpenses: Long = 0L,
+    val groupExpenses: Long = 0L,
+    val individualExpenses: Long = 0L,
     val workersPresent: Int = 0,
     val totalHours: Double = 0.0,
     val transitCost: Long = 0L,

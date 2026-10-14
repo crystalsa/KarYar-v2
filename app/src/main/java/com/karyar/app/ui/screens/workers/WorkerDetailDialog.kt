@@ -286,10 +286,13 @@ fun WorkerDetailDialog(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = if (isAbsent) "۰ تومان (غیبت)" else Formatters.formatCurrency(dayCalc.netPayout),
+                                text = if (isAbsent) {
+                                    if (dayCalc.totalDeductions > 0) "-${Formatters.formatCurrency(dayCalc.totalDeductions)} (کسورات غیبت)"
+                                    else "۰ تومان (غیبت)"
+                                } else Formatters.formatCurrency(dayCalc.netPayout),
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 13.5.sp,
-                                color = if (isAbsent) RoseAccent else EmeraldAccent
+                                color = if (isAbsent || dayCalc.netPayout < 0) RoseAccent else EmeraldAccent
                             )
                         }
                     }

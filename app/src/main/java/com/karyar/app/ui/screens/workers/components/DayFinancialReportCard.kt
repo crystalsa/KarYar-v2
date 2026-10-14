@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
 import com.karyar.app.data.local.entity.AttendanceEntity
 import com.karyar.app.data.local.entity.DateFolderEntity
+import com.karyar.app.data.local.entity.ExpenseEntity
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.ui.components.IconicsBox
 import com.karyar.app.ui.components.IconicsSize
@@ -56,6 +57,7 @@ fun DayFinancialReportCard(
     targetDayFolder: DateFolderEntity,
     allWorkers: List<WorkerEntity>,
     attendanceList: List<AttendanceEntity>,
+    expenses: List<ExpenseEntity> = emptyList(),
     isExpanded: Boolean,
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier
@@ -166,6 +168,13 @@ fun DayFinancialReportCard(
         WageCalculator.calculateDayPayout(worker, att)
     }
 
+    val dayGroupExpenses = expenses
+        .filter { it.date == targetDayFolder.date && it.scope.equals("GROUP", ignoreCase = true) }
+        .sumOf { it.amount }
+
+    // Direct deduction of workshop group expenses from daily final cost
+    val totalDayNetCost = (totalDayPayroll - dayGroupExpenses).coerceAtLeast(0L)
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -214,13 +223,13 @@ fun DayFinancialReportCard(
             ) {
                 Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "( مجموع خالص پرداختی )",
+                        text = if (dayGroupExpenses > 0) "( هزینه خالص نهایی روز )" else "( مجموع خالص پرداختی )",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
@@ -250,7 +259,7 @@ fun DayFinancialReportCard(
                         }
 
                         Text(
-                            text = Formatters.formatCurrency(totalDayPayroll),
+                            text = Formatters.formatCurrency(totalDayNetCost),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = EmeraldAccent
@@ -389,6 +398,28 @@ fun DayFinancialReportCard(
                         allowance = medicalAllowance,
                         deduction = medicalDeduction
                     )
+
+                    if (dayGroupExpenses > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "(-) کسر هزینه مشترک کارگاه:",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = RoseAccent
+                            )
+                            Text(
+                                text = "-${Formatters.formatCurrency(dayGroupExpenses)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = RoseAccent
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider(thickness = 0.6.dp, color = Slate200)
