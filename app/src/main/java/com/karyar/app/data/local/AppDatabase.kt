@@ -29,7 +29,7 @@ import com.karyar.app.util.JalaliCalendar
         AttendanceEntity::class,
         ExpenseEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -206,6 +206,15 @@ abstract class AppDatabase : RoomDatabase() {
             addColumnIfNotExists(db, "attendance", "employerName", "TEXT NOT NULL DEFAULT ''")
             addColumnIfNotExists(db, "attendance", "foremanName", "TEXT NOT NULL DEFAULT ''")
             addColumnIfNotExists(db, "attendance", "notes", "TEXT NOT NULL DEFAULT ''")
+            addColumnIfNotExists(db, "attendance", "transitAllowance", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfNotExists(db, "attendance", "transitImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+            addColumnIfNotExists(db, "attendance", "foodAllowance", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfNotExists(db, "attendance", "foodImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+            addColumnIfNotExists(db, "attendance", "accommodationAllowance", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfNotExists(db, "attendance", "accommodationImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+            addColumnIfNotExists(db, "attendance", "medicalAllowance", "INTEGER NOT NULL DEFAULT 0")
+            addColumnIfNotExists(db, "attendance", "medicalImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+            addColumnIfNotExists(db, "attendance", "hasCustomAllowances", "INTEGER NOT NULL DEFAULT 0")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_attendance_workerId` ON `attendance` (`workerId`)")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_attendance_folderId` ON `attendance` (`folderId`)")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_attendance_date` ON `attendance` (`date`)")
@@ -574,6 +583,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfNotExists(db, "attendance", "transitAllowance", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfNotExists(db, "attendance", "transitImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+                addColumnIfNotExists(db, "attendance", "foodAllowance", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfNotExists(db, "attendance", "foodImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+                addColumnIfNotExists(db, "attendance", "accommodationAllowance", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfNotExists(db, "attendance", "accommodationImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+                addColumnIfNotExists(db, "attendance", "medicalAllowance", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfNotExists(db, "attendance", "medicalImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
+                addColumnIfNotExists(db, "attendance", "hasCustomAllowances", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -581,7 +604,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "worker_management_db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .addCallback(object : RoomDatabase.Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)

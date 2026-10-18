@@ -98,8 +98,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     ) { dateFolder, workerList, attList ->
         if (dateFolder != null) {
             val attendedIds = attList.filter { it.date == dateFolder.date }.map { it.workerId }.toSet()
-            val specific = workerList.filter { worker -> worker.id in attendedIds }
-            if (specific.isNotEmpty()) specific else workerList
+            workerList.filter { worker -> worker.id in attendedIds }
         } else {
             workerList
         }
@@ -291,14 +290,12 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     fun addDateFolder(date: String, dayOfWeek: String, title: String, notes: String = "") {
         val folder = currentFolder.value ?: return
         launchDb("addDateFolder") {
-            val newId = repository.insertDateFolder(
-                DateFolderEntity(
-                    folderId = folder.id,
-                    date = date,
-                    dayOfWeek = dayOfWeek,
-                    title = title,
-                    notes = notes
-                )
+            val newId = repository.createNextDay(
+                folderId = folder.id,
+                date = date,
+                dayOfWeek = dayOfWeek,
+                title = title,
+                notes = notes
             )
             selectedDateFolder.value = DateFolderEntity(
                 id = newId,
@@ -306,7 +303,8 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
                 date = date,
                 dayOfWeek = dayOfWeek,
                 title = title,
-                notes = notes
+                notes = notes,
+                epochDay = JalaliCalendar.toEpochDay(date)
             )
         }
     }
@@ -455,7 +453,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateAttendance(attendance: AttendanceEntity) {
-        launchDb("updateAttendance") { repository.updateAttendance(attendance) }
+        launchDb("updateAttendance") { repository.insertAttendance(attendance) }
     }
 
     fun setAttendanceStatus(worker: WorkerEntity, dateStr: String, status: String) {
@@ -606,6 +604,31 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteAttendance(attendance: AttendanceEntity) {
         launchDb("deleteAttendance") { repository.deleteAttendance(attendance) }
+    }
+
+    fun removeWorkerFromDate(workerId: Long, date: String) {
+        launchDb("removeWorkerFromDate") {
+            repository.deleteAttendanceForWorkerAndDate(workerId, date)
+            showSnackbarMessage("کارگر از این روز کاری حذف شد")
+        }
+    }
+
+    fun addExistingWorkerToDate(worker: WorkerEntity, date: String, dateFolderId: Long) {
+        val folder = currentFolder.value ?: return
+        launchDb("addExistingWorkerToDate") {
+            repository.insertAttendance(
+                WageCalculator.defaultAttendanceFor(
+                    worker = worker,
+                    date = date,
+                    dateFolderId = dateFolderId,
+                    folderId = folder.id,
+                    workplaceName = folder.name,
+                    foremanName = folder.foremanName,
+                    employerName = folder.employerName
+                )
+            )
+            showSnackbarMessage("«${worker.name}» به این روز کاری افزوده شد")
+        }
     }
 
     // Expense Actions

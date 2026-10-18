@@ -1,6 +1,7 @@
 package com.karyar.app.ui.screens.attendance
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -13,23 +14,28 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -58,6 +64,7 @@ import com.karyar.app.ui.screens.attendance.components.AttendanceTableHeader
 import com.karyar.app.ui.screens.attendance.components.AttendanceWorkerRow
 import com.karyar.app.ui.screens.attendance.components.CopyWorkerConfirmDialog
 import com.karyar.app.ui.screens.attendance.components.DeleteWorkerConfirmDialog
+import com.karyar.app.ui.screens.attendance.components.EditDayAttendanceDialog
 import com.karyar.app.ui.screens.attendance.components.HourlyProfileRequiredDialog
 import com.karyar.app.ui.screens.attendance.components.MustCreateDayDialog
 import com.karyar.app.ui.screens.workers.AddEditWorkerDialog
@@ -84,6 +91,7 @@ fun AttendanceScreen(
     var showMustCreateDayDialog by remember { mutableStateOf(false) }
     var showHourlyProfileRequiredDialog by remember { mutableStateOf(false) }
     var editingWorker by remember { mutableStateOf<WorkerEntity?>(null) }
+    var editingDayAttendanceWorker by remember { mutableStateOf<WorkerEntity?>(null) }
     var deletingWorkerFromAttendance by remember { mutableStateOf<WorkerEntity?>(null) }
     var copyingWorkerFromAttendance by remember { mutableStateOf<WorkerEntity?>(null) }
     var isCreatingNextDay by remember { mutableStateOf(false) }
@@ -97,8 +105,24 @@ fun AttendanceScreen(
     val activeDayFolder: DateFolderEntity? = selectedDateFolder ?: dateFolders.lastOrNull() ?: dateFolders.firstOrNull()
     val targetDate = activeDayFolder?.date ?: ""
 
-    // Workers for the active day: all workers in the workplace belong to the active day
-    val dayWorkers: List<WorkerEntity> = allWorkers
+    // Workers for the active day: strictly workers who have an attendance record on this day
+    val dayWorkers: List<WorkerEntity> = remember(allWorkers, attendanceList, targetDate) {
+        if (targetDate.isBlank()) emptyList()
+        else {
+            val attendedIds = attendanceList
+                .filter { it.date == targetDate }
+                .map { it.workerId }
+                .toSet()
+            allWorkers.filter { it.id in attendedIds }
+        }
+    }
+
+    // Workers in the project who are not yet added to this active day
+    val unassignedWorkers: List<WorkerEntity> = remember(allWorkers, dayWorkers) {
+        val assignedIds = dayWorkers.map { it.id }.toSet()
+        allWorkers.filter { it.id !in assignedIds }
+    }
+    var showAddWorkerChoiceDialog by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
@@ -309,6 +333,7 @@ fun AttendanceScreen(
                                         attendance = att,
                                         targetDate = targetDate,
                                         onEditWorker = { editingWorker = worker },
+                                        onEditDayAttendance = { editingDayAttendanceWorker = worker },
                                         onSetStatus = { status -> viewModel.setAttendanceStatus(worker, targetDate, status) },
                                         onHourlyRequired = { showHourlyProfileRequiredDialog = true },
                                         onCopyWorker = { copyingWorkerFromAttendance = worker },
@@ -355,6 +380,8 @@ fun AttendanceScreen(
             onClick = {
                 if (dateFolders.isEmpty() || activeDayFolder == null) {
                     showMustCreateDayDialog = true
+                } else if (unassignedWorkers.isNotEmpty()) {
+                    showAddWorkerChoiceDialog = true
                 } else {
                     isAddingWorker = true
                 }
@@ -403,12 +430,36 @@ fun AttendanceScreen(
     }
 
     if (editingWorker != null) {
+        val worker = editingWorker!!
+        val currentAtt = attendanceList.firstOrNull { it.workerId == worker.id && it.date == targetDate }
         AddEditWorkerDialog(
-            initialWorker = editingWorker,
+            initialWorker = worker,
+            initialAttendance = currentAtt,
+            initialDate = targetDate,
+            initialDayOfWeek = activeDayFolder?.dayOfWeek,
             onDismiss = { editingWorker = null },
             onConfirm = { updatedWorker ->
                 viewModel.updateWorker(updatedWorker)
                 editingWorker = null
+            },
+            onConfirmAttendance = { updatedAtt ->
+                viewModel.updateAttendance(updatedAtt)
+                editingWorker = null
+            }
+        )
+    }
+
+    if (editingDayAttendanceWorker != null) {
+        val worker = editingDayAttendanceWorker!!
+        val currentAtt = attendanceList.firstOrNull { it.workerId == worker.id && it.date == targetDate }
+        EditDayAttendanceDialog(
+            worker = worker,
+            targetDate = targetDate,
+            attendance = currentAtt,
+            onDismiss = { editingDayAttendanceWorker = null },
+            onConfirm = { updatedAtt ->
+                viewModel.updateAttendance(updatedAtt)
+                editingDayAttendanceWorker = null
             }
         )
     }
@@ -472,12 +523,130 @@ fun AttendanceScreen(
         )
     }
 
+    if (showAddWorkerChoiceDialog && activeDayFolder != null) {
+        AlertDialog(
+            onDismissRequest = { showAddWorkerChoiceDialog = false },
+            title = {
+                Text(
+                    text = "افزودن کارگر به این روز",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "می‌توانید یکی از پرسنل پروژه را به این روز کاری اضافه کنید یا کارگر جدیدی تعریف نمایید:",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "پرسنل موجود در پروژه:",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(unassignedWorkers, key = { it.id }) { worker ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Slate100,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        viewModel.addExistingWorkerToDate(
+                                            worker = worker,
+                                            date = targetDate,
+                                            dateFolderId = activeDayFolder.id
+                                        )
+                                        showAddWorkerChoiceDialog = false
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(worker.colorTag)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = worker.name.take(1),
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = worker.name,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "(${worker.role})",
+                                        fontSize = 10.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showAddWorkerChoiceDialog = false
+                        isAddingWorker = true
+                    }
+                ) {
+                    Text(
+                        text = "+ تعریف کارگر جدید",
+                        fontWeight = FontWeight.Bold,
+                        color = AmberAccent,
+                        fontSize = 12.5.sp
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddWorkerChoiceDialog = false }) {
+                    Text("انصراف", fontSize = 12.sp)
+                }
+            }
+        )
+    }
+
     if (deletingWorkerFromAttendance != null) {
+        val workerToDelete = deletingWorkerFromAttendance!!
+        val dayInfoText = if (targetDate.isNotBlank())
+            "${activeDayFolder?.dayOfWeek ?: ""} ${Formatters.toPersianDigits(targetDate)}".trim()
+        else null
         DeleteWorkerConfirmDialog(
-            workerName = deletingWorkerFromAttendance!!.name,
+            workerName = workerToDelete.name,
+            dayInfo = dayInfoText,
             onDismiss = { deletingWorkerFromAttendance = null },
-            onConfirm = {
-                deletingWorkerFromAttendance?.let { viewModel.deleteWorker(it) }
+            onRemoveFromDay = if (targetDate.isNotBlank()) {
+                {
+                    viewModel.removeWorkerFromDate(workerToDelete.id, targetDate)
+                    deletingWorkerFromAttendance = null
+                }
+            } else null,
+            onDeletePermanently = {
+                viewModel.deleteWorker(workerToDelete)
                 deletingWorkerFromAttendance = null
             }
         )

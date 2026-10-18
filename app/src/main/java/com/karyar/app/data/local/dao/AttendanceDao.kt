@@ -24,6 +24,9 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance WHERE workerId = :workerId ORDER BY timestamp DESC")
     fun getAttendanceForWorker(workerId: Long): Flow<List<AttendanceEntity>>
 
+    @Query("SELECT * FROM attendance WHERE workerId = :workerId")
+    suspend fun getAttendanceForWorkerSync(workerId: Long): List<AttendanceEntity>
+
     @Query("SELECT * FROM attendance WHERE folderId = :folderId AND date = :date ORDER BY id DESC")
     fun getAttendanceForDateInFolder(folderId: Long, date: String): Flow<List<AttendanceEntity>>
 
@@ -56,6 +59,9 @@ interface AttendanceDao {
 
     @Delete
     suspend fun deleteAttendance(attendance: AttendanceEntity)
+
+    @Query("DELETE FROM attendance WHERE workerId = :workerId AND date = :date")
+    suspend fun deleteAttendanceForWorkerAndDate(workerId: Long, date: String)
 
     @Query("DELETE FROM attendance WHERE folderId = :folderId")
     suspend fun deleteAttendanceByFolder(folderId: Long)

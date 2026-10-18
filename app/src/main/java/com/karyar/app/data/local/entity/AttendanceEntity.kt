@@ -52,5 +52,16 @@ data class AttendanceEntity(
     val workplaceName: String = "",     // نام محل کار / پروژه
     val employerName: String = "",      // نام کارفرما
     val foremanName: String = "",       // نام سرکارگر
-    val notes: String = ""              // توضیحات آزاد کاربر
+    val notes: String = "",             // توضیحات آزاد کاربر
+
+    // تنظیمات اختصاصی هزینه‌ها و مزایای این روز کاری (مستقل از روزهای دیگر)
+    val transitAllowance: Long = 0L,
+    val transitImpact: String = "ALLOWANCE",
+    val foodAllowance: Long = 0L,
+    val foodImpact: String = "ALLOWANCE",
+    val accommodationAllowance: Long = 0L,
+    val accommodationImpact: String = "ALLOWANCE",
+    val medicalAllowance: Long = 0L,
+    val medicalImpact: String = "ALLOWANCE",
+    val hasCustomAllowances: Boolean = false
 )

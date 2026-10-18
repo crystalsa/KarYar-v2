@@ -19,8 +19,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,6 +57,7 @@ import com.karyar.app.ui.theme.CyanAccent
 import com.karyar.app.ui.theme.EmeraldAccent
 import com.karyar.app.ui.theme.RoseAccent
 import com.karyar.app.ui.theme.Slate100
+import com.karyar.app.ui.theme.Slate200
 import com.karyar.app.util.Formatters
 import com.karyar.app.util.WageCalculator
 
@@ -69,6 +77,7 @@ fun WorkerItemCard(
     val isHalfDay = WageCalculator.isHalfDay(worker, attendance)
     val isFullDay = WageCalculator.isFullDay(worker, attendance)
     var showPhone by remember(worker.id) { mutableStateOf(false) }
+    var showMenu by remember(worker.id) { mutableStateOf(false) }
 
     HairlineCard(
         modifier = Modifier
@@ -150,10 +159,65 @@ fun WorkerItemCard(
                         else -> Pair("تمام روز", EmeraldAccent)
                     }
 
-                    StatusBadge(
-                        text = statusBadgeInfo.first,
-                        dotColor = statusBadgeInfo.second
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatusBadge(
+                            text = statusBadgeInfo.first,
+                            dotColor = statusBadgeInfo.second
+                        )
+                        Box {
+                            IconButton(
+                                onClick = { showMenu = true },
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .testTag("worker_menu_${worker.id}")
+                            ) {
+                                Icon(
+                                    Icons.Default.MoreVert,
+                                    contentDescription = "عملیات کارگر",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("ویرایش مشخصات", fontSize = 12.sp) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = null,
+                                            tint = AmberAccent,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        onEdit()
+                                    }
+                                )
+                                HorizontalDivider(thickness = 0.5.dp, color = Slate200)
+                                DropdownMenuItem(
+                                    text = { Text("حذف کارگر", color = RoseAccent, fontSize = 12.sp) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = null,
+                                            tint = RoseAccent,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        onDelete()
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     // نمایش شماره تماس زیر نشانگر وضعیت کار هنگام کلیک روی نام کارگر
                     if (showPhone && !worker.phone.isNullOrBlank()) {

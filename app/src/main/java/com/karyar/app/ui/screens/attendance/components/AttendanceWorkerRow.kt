@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -56,6 +58,7 @@ fun AttendanceWorkerRow(
     attendance: AttendanceEntity?,
     targetDate: String,
     onEditWorker: () -> Unit,
+    onEditDayAttendance: () -> Unit = onEditWorker,
     onSetStatus: (String) -> Unit,
     onHourlyRequired: () -> Unit,
     onCopyWorker: () -> Unit,
@@ -66,10 +69,10 @@ fun AttendanceWorkerRow(
     val isHalfDay = WageCalculator.isHalfDay(worker, attendance)
     val isFullDay = WageCalculator.isFullDay(worker, attendance)
     val isHourlyChecked = isHourlyWorker && !isAbsent
-    val otHours = if (attendance != null && attendance.overtimeHours > 0.0) attendance.overtimeHours else worker.overtimeHours
+    val otHours = if (attendance != null) attendance.overtimeHours else worker.overtimeHours
     val hasOvertime = otHours > 0.0
 
-    val hHours = if (attendance != null && attendance.hourlyHours > 0.0) attendance.hourlyHours else (if (worker.hourlyHours > 0.0) worker.hourlyHours else 0.0)
+    val hHours = if (attendance != null) attendance.hourlyHours else (if (worker.hourlyHours > 0.0) worker.hourlyHours else 0.0)
     val hasHourly = hHours > 0.0
 
     Row(
@@ -248,8 +251,55 @@ fun AttendanceWorkerRow(
                     DropdownMenuItem(
                         text = {
                             Text(
-                                text = "کپی",
-                                fontSize = 12.5.sp,
+                                text = "ویرایش کارکرد و ساعات این روز",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CyanAccent
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.AccessTime,
+                                contentDescription = null,
+                                tint = CyanAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onEditDayAttendance()
+                        }
+                    )
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "ویرایش مشخصات کلی کارگر",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = AmberAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onEditWorker()
+                        }
+                    )
+
+                    HorizontalDivider(thickness = 0.5.dp, color = Slate200)
+
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "کپی کارگر",
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
                             )
                         },
@@ -267,11 +317,13 @@ fun AttendanceWorkerRow(
                         }
                     )
 
+                    HorizontalDivider(thickness = 0.5.dp, color = Slate200)
+
                     DropdownMenuItem(
                         text = {
                             Text(
-                                text = "حذف",
-                                fontSize = 12.5.sp,
+                                text = "حذف کارگر",
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = RoseAccent
                             )

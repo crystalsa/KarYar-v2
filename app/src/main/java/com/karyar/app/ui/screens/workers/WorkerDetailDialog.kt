@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Dialog
 import com.karyar.app.data.local.entity.AttendanceEntity
 import com.karyar.app.data.local.entity.WorkerEntity
@@ -116,8 +117,36 @@ fun WorkerDetailDialog(
                             )
                         }
                     }
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "بستن", modifier = Modifier.size(18.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onEdit,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("edit_worker_header_button")
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "ویرایش اطلاعات کارگر",
+                                tint = AmberAccent,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("delete_worker_header_button")
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "حذف کارگر",
+                                tint = RoseAccent,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(30.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "بستن", modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
 
@@ -311,15 +340,34 @@ fun WorkerDetailDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Action: Close
-                LoadingButton(
-                    text = "بستن",
-                    onClick = onDismiss,
+                // Actions: Edit and Close
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    containerColor = AmberAccent,
-                    height = 38.dp,
-                    fontSize = 12.5.sp
-                )
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LoadingOutlinedButton(
+                        text = "ویرایش مشخصات",
+                        onClick = onEdit,
+                        modifier = Modifier.weight(1f),
+                        borderColor = AmberAccent,
+                        contentColor = AmberAccent,
+                        height = 38.dp,
+                        fontSize = 12.sp,
+                        icon = Icons.Default.Edit,
+                        testTag = "edit_worker_footer_button"
+                    )
+                    LoadingButton(
+                        text = "بستن",
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("close_worker_detail_button"),
+                        containerColor = Slate100,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        height = 38.dp,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
     }

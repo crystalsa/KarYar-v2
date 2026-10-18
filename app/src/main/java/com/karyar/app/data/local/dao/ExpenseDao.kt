@@ -37,6 +37,9 @@ interface ExpenseDao {
     @Query("DELETE FROM expenses WHERE folderId = :folderId")
     suspend fun deleteExpensesByFolder(folderId: Long)
 
+    @Query("UPDATE expenses SET workerName = :newName WHERE workerId = :workerId")
+    suspend fun updateWorkerName(workerId: Long, newName: String)
+
     @Query("DELETE FROM expenses")
     suspend fun clearAll()
 }

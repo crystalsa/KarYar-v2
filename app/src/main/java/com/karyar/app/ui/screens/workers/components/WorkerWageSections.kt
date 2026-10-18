@@ -104,10 +104,14 @@ fun WorkerHourlyWageSection(
                         OutlinedTextField(
                             value = hourlyHours,
                             onValueChange = { input ->
-                                onHourlyHoursChange(Formatters.toEnglishDigits(input).filter { ch -> ch.isDigit() || ch == '.' })
+                                val normalized = Formatters.toEnglishDigits(input)
+                                    .replace('/', '.')
+                                    .replace('٫', '.')
+                                    .replace(',', '.')
+                                onHourlyHoursChange(normalized.filter { ch -> ch.isDigit() || ch == '.' })
                             },
                             label = { Text("تعداد ساعت کار", fontSize = 11.sp) },
-                            placeholder = { Text("۸", fontSize = 11.sp) },
+                            placeholder = { Text("۸ یا ۸.۵", fontSize = 11.sp) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.weight(0.8f),
                             singleLine = true
@@ -189,10 +193,14 @@ fun WorkerOvertimeSection(
                     OutlinedTextField(
                         value = overtimeHours,
                         onValueChange = { input ->
-                            onOvertimeHoursChange(Formatters.toEnglishDigits(input).filter { ch -> ch.isDigit() || ch == '.' })
+                            val normalized = Formatters.toEnglishDigits(input)
+                                .replace('/', '.')
+                                .replace('٫', '.')
+                                .replace(',', '.')
+                            onOvertimeHoursChange(normalized.filter { ch -> ch.isDigit() || ch == '.' })
                         },
                         label = { Text("ساعت اضافه", fontSize = 11.sp) },
-                        placeholder = { Text("۲", fontSize = 11.sp) },
+                        placeholder = { Text("۲ یا ۰.۵", fontSize = 11.sp) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(0.8f),
                         singleLine = true

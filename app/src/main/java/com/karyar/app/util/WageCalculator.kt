@@ -97,6 +97,15 @@ object WageCalculator {
                 hourlyHours = 0.0,
                 overtimeHours = worker.overtimeHours,
                 overtimeRate = worker.overtimeRate,
+                transitAllowance = worker.transitAllowance,
+                transitImpact = worker.transitImpact,
+                foodAllowance = worker.foodAllowance,
+                foodImpact = worker.foodImpact,
+                accommodationAllowance = worker.accommodationAllowance,
+                accommodationImpact = worker.accommodationImpact,
+                medicalAllowance = worker.medicalAllowance,
+                medicalImpact = worker.medicalImpact,
+                hasCustomAllowances = true,
                 workplaceName = workplaceName,
                 foremanName = foremanName,
                 employerName = employerName,
@@ -116,6 +125,15 @@ object WageCalculator {
                 hourlyHours = worker.hourlyHours,
                 overtimeHours = worker.overtimeHours,
                 overtimeRate = worker.overtimeRate,
+                transitAllowance = worker.transitAllowance,
+                transitImpact = worker.transitImpact,
+                foodAllowance = worker.foodAllowance,
+                foodImpact = worker.foodImpact,
+                accommodationAllowance = worker.accommodationAllowance,
+                accommodationImpact = worker.accommodationImpact,
+                medicalAllowance = worker.medicalAllowance,
+                medicalImpact = worker.medicalImpact,
+                hasCustomAllowances = true,
                 workplaceName = workplaceName,
                 foremanName = foremanName,
                 employerName = employerName,
@@ -135,6 +153,15 @@ object WageCalculator {
                 hourlyHours = if (worker.hourlyHours > 0) worker.hourlyHours else 8.0,
                 overtimeHours = worker.overtimeHours,
                 overtimeRate = worker.overtimeRate,
+                transitAllowance = worker.transitAllowance,
+                transitImpact = worker.transitImpact,
+                foodAllowance = worker.foodAllowance,
+                foodImpact = worker.foodImpact,
+                accommodationAllowance = worker.accommodationAllowance,
+                accommodationImpact = worker.accommodationImpact,
+                medicalAllowance = worker.medicalAllowance,
+                medicalImpact = worker.medicalImpact,
+                hasCustomAllowances = true,
                 workplaceName = workplaceName,
                 foremanName = foremanName,
                 employerName = employerName,
@@ -154,6 +181,15 @@ object WageCalculator {
                 hourlyHours = 0.0,
                 overtimeHours = 0.0,
                 overtimeRate = 0L,
+                transitAllowance = worker.transitAllowance,
+                transitImpact = worker.transitImpact,
+                foodAllowance = worker.foodAllowance,
+                foodImpact = worker.foodImpact,
+                accommodationAllowance = worker.accommodationAllowance,
+                accommodationImpact = worker.accommodationImpact,
+                medicalAllowance = worker.medicalAllowance,
+                medicalImpact = worker.medicalImpact,
+                hasCustomAllowances = true,
                 workplaceName = workplaceName,
                 foremanName = foremanName,
                 employerName = employerName,
@@ -218,10 +254,23 @@ object WageCalculator {
             // Rule: Absent day (کارگر غایب):
             // - دستمزد روزانه، دستمزد ساعتی، اضافه کاری و مزایا (افزایشی) صفر است.
             // - کسورات (کسر ایاب و ذهاب، مسکن، خوراک، درمان) حتی در روز غیبت لحاظ می‌شود.
-            val transitDeduction = if (worker.transitImpact == "DEDUCTION") worker.transitAllowance else 0L
-            val foodDeduction = if (worker.foodImpact == "DEDUCTION") worker.foodAllowance else 0L
-            val accomDeduction = if (worker.accommodationImpact == "DEDUCTION") worker.accommodationAllowance else 0L
-            val medDeduction = if (worker.medicalImpact == "DEDUCTION") worker.medicalAllowance else 0L
+            val useAttAllowances = att != null && att.hasCustomAllowances
+            val effectiveTransitAllowance = if (useAttAllowances) att.transitAllowance else worker.transitAllowance
+            val effectiveTransitImpact = if (useAttAllowances) att.transitImpact else worker.transitImpact
+            val transitDeduction = if (effectiveTransitImpact == "DEDUCTION") effectiveTransitAllowance else 0L
+
+            val effectiveFoodAllowance = if (useAttAllowances) att.foodAllowance else worker.foodAllowance
+            val effectiveFoodImpact = if (useAttAllowances) att.foodImpact else worker.foodImpact
+            val foodDeduction = if (effectiveFoodImpact == "DEDUCTION") effectiveFoodAllowance else 0L
+
+            val effectiveAccomAllowance = if (useAttAllowances) att.accommodationAllowance else worker.accommodationAllowance
+            val effectiveAccomImpact = if (useAttAllowances) att.accommodationImpact else worker.accommodationImpact
+            val accomDeduction = if (effectiveAccomImpact == "DEDUCTION") effectiveAccomAllowance else 0L
+
+            val effectiveMedAllowance = if (useAttAllowances) att.medicalAllowance else worker.medicalAllowance
+            val effectiveMedImpact = if (useAttAllowances) att.medicalImpact else worker.medicalImpact
+            val medDeduction = if (effectiveMedImpact == "DEDUCTION") effectiveMedAllowance else 0L
+
             val totalDeductions = transitDeduction + foodDeduction + accomDeduction + medDeduction
 
             return DayCalculationResult(
@@ -288,18 +337,27 @@ object WageCalculator {
                        else if (halfDay) 4.0
                        else 8.0
 
-        // 5. Allowances and Deductions (applied once per working day)
-        val transitAllowance = if (worker.transitImpact == "ALLOWANCE") worker.transitAllowance else 0L
-        val transitDeduction = if (worker.transitImpact == "DEDUCTION") worker.transitAllowance else 0L
+        // 5. Allowances and Deductions (applied once per working day; reads from attendance record if customized, otherwise falls back to worker template)
+        val useAttAllowances = att != null && att.hasCustomAllowances
+        val effectiveTransitAllowance = if (useAttAllowances) att.transitAllowance else worker.transitAllowance
+        val effectiveTransitImpact = if (useAttAllowances) att.transitImpact else worker.transitImpact
+        val transitAllowance = if (effectiveTransitImpact == "ALLOWANCE") effectiveTransitAllowance else 0L
+        val transitDeduction = if (effectiveTransitImpact == "DEDUCTION") effectiveTransitAllowance else 0L
 
-        val foodAllowance = if (worker.foodImpact == "ALLOWANCE") worker.foodAllowance else 0L
-        val foodDeduction = if (worker.foodImpact == "DEDUCTION") worker.foodAllowance else 0L
+        val effectiveFoodAllowance = if (useAttAllowances) att.foodAllowance else worker.foodAllowance
+        val effectiveFoodImpact = if (useAttAllowances) att.foodImpact else worker.foodImpact
+        val foodAllowance = if (effectiveFoodImpact == "ALLOWANCE") effectiveFoodAllowance else 0L
+        val foodDeduction = if (effectiveFoodImpact == "DEDUCTION") effectiveFoodAllowance else 0L
 
-        val accomAllowance = if (worker.accommodationImpact == "ALLOWANCE") worker.accommodationAllowance else 0L
-        val accomDeduction = if (worker.accommodationImpact == "DEDUCTION") worker.accommodationAllowance else 0L
+        val effectiveAccomAllowance = if (useAttAllowances) att.accommodationAllowance else worker.accommodationAllowance
+        val effectiveAccomImpact = if (useAttAllowances) att.accommodationImpact else worker.accommodationImpact
+        val accomAllowance = if (effectiveAccomImpact == "ALLOWANCE") effectiveAccomAllowance else 0L
+        val accomDeduction = if (effectiveAccomImpact == "DEDUCTION") effectiveAccomAllowance else 0L
 
-        val medAllowance = if (worker.medicalImpact == "ALLOWANCE") worker.medicalAllowance else 0L
-        val medDeduction = if (worker.medicalImpact == "DEDUCTION") worker.medicalAllowance else 0L
+        val effectiveMedAllowance = if (useAttAllowances) att.medicalAllowance else worker.medicalAllowance
+        val effectiveMedImpact = if (useAttAllowances) att.medicalImpact else worker.medicalImpact
+        val medAllowance = if (effectiveMedImpact == "ALLOWANCE") effectiveMedAllowance else 0L
+        val medDeduction = if (effectiveMedImpact == "DEDUCTION") effectiveMedAllowance else 0L
 
         val totalAllowances = transitAllowance + foodAllowance + accomAllowance + medAllowance
         val totalDeductions = transitDeduction + foodDeduction + accomDeduction + medDeduction
