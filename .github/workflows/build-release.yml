@@ -97,12 +97,6 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          # Check if persistent debug keystore source exists before running restore script
-          HAS_PERSISTENT_DEBUG="false"
-          if [ -n "$DEBUG_KEYSTORE_BASE64" ] || [ -s "debug.keystore.base64" ]; then
-            HAS_PERSISTENT_DEBUG="true"
-          fi
-
           chmod +x .github/scripts/restore-debug-keystore.sh
           .github/scripts/restore-debug-keystore.sh build
 
@@ -120,9 +114,9 @@ jobs:
             echo "STORE_PASSWORD=$STORE_PASSWORD" >> $GITHUB_ENV
             echo "KEY_ALIAS=${KEY_ALIAS:-upload}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
-          # 2. Fallback: Use persistent repository keystore (debug.keystore.base64 / DEBUG_KEYSTORE_BASE64)
-          elif [ "$HAS_PERSISTENT_DEBUG" = "true" ] && [ -s "$GITHUB_WORKSPACE/debug.keystore" ]; then
-            echo "Using persistent repository keystore (debug.keystore.base64) for Release signing & GitHub Release..."
+          # 2. Fallback: Use persistent project keystore restored by restore-debug-keystore.sh
+          elif [ -s "$GITHUB_WORKSPACE/debug.keystore" ]; then
+            echo "Using persistent project keystore for Release signing & GitHub Release..."
             cp "$GITHUB_WORKSPACE/debug.keystore" "$GITHUB_WORKSPACE/release.keystore"
             cp "$GITHUB_WORKSPACE/debug.keystore" "$GITHUB_WORKSPACE/my-upload-key.jks" 2>/dev/null || true
             echo "has_release_keystore=true" >> $GITHUB_OUTPUT
@@ -132,7 +126,6 @@ jobs:
             echo "KEY_PASSWORD=android" >> $GITHUB_ENV
           else
             echo "has_release_keystore=false" >> $GITHUB_OUTPUT
-            echo "::warning title=کلید رسمی انتشار یافت نشد::هیچ کلید ثابتی یافت نشد. APK با کلید موقت بیلد می‌شود و ریلیز عمومی در گیت‌هاب ایجاد نخواهد شد."
           fi
 
       - name: Determine Version Info (Auto-Increment)
@@ -258,17 +251,8 @@ jobs:
           path: artifacts/KarYar-Latest.apk
           retention-days: 30
 
-      - name: Notify No Public Release Due to Missing Keystore
-        if: steps.prep_signing.outputs.has_release_keystore != 'true'
-        run: |
-          echo "=========================================================================================="
-          echo "⚠️ هشدار: متغیر KEYSTORE_BASE64 در GitHub Secrets تنظیم نشده است."
-          echo "به منظور حفظ یکپارچگی داده‌های کاربران و جلوگیری از خطای نصب نسخه جدید روی نسخه قبلی (تغییر امضا)،"
-          echo "هیچ ریلیز عمومی در گیت‌هاب ایجاد نمی‌شود. فایل APK صرفاً در بخش Artifacts آپلود شد."
-          echo "=========================================================================================="
-
       - name: Create GitHub Release
-        if: steps.prep_signing.outputs.has_release_keystore == 'true' && steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && (github.event_name != 'workflow_dispatch' || inputs.create_release == true)
+        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && (github.event_name != 'workflow_dispatch' || inputs.create_release == true)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}
@@ -278,7 +262,7 @@ jobs:
             ### 📱 فایل نصبی رسمی اندروید (KarYar APK)
             - **نسخه (Version Name):** `${{ steps.version_info.outputs.version_name }}`
             - **کد نسخه (Version Code):** `${{ steps.version_info.outputs.version_code }}`
-            - **وضعیت امضا:** امضاشده با کلید اختصاصی انتشار (Release Keystore)
+            - **وضعیت امضا:** امضاشده با کلید ثابت انتشار (Release Keystore)
             
             📥 جهت دانلود و نصب روی گوشی اندروید، فایل `KarYar-${{ steps.version_info.outputs.tag }}.apk` را از بخش Assets در زیر دانلود نمایید.
           files: |
@@ -292,7 +276,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prune Old Releases (Keep only latest 5, preserving git tags)
-        if: steps.prep_signing.outputs.has_release_keystore == 'true' && steps.version_info.outputs.is_release == 'true'
+        if: steps.version_info.outputs.is_release == 'true'
         run: |
           echo "Checking existing releases to keep only the 5 most recent versions..."
           # gh release list returns releases ordered newest first.
