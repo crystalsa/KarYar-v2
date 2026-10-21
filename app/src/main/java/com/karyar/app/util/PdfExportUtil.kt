@@ -144,7 +144,7 @@ object PdfExportUtil {
         }
 
         currentY += 10f
-        drawSummaryAndExpensesBox(canvas, vazirTypeface, currentY, analytics, expenses)
+        drawSummaryAndExpensesBox(canvas, vazirTypeface, currentY, analytics, performances, expenses)
         currentY += 72f
 
         drawSignatures(canvas, vazirTypeface, currentY, foremanName, employerName)
@@ -248,7 +248,8 @@ object PdfExportUtil {
         drawStatCard(canvas, typeface, 627f, startY, cardWidth, cardHeight, "مجموع دستمزد پایه", Formatters.formatCurrency(analytics.totalWagesPaid), "#10B981")
         drawStatCard(canvas, typeface, 430f, startY, cardWidth, cardHeight, "اضافه کاری و ساعتی", Formatters.formatCurrency(analytics.totalOvertimePaid + analytics.totalHourlyPaid), "#F59E0B")
         drawStatCard(canvas, typeface, 233f, startY, cardWidth, cardHeight, "هزینه‌های کارگاه", Formatters.formatCurrency(analytics.grandTotalExpenses), "#EC4899")
-        drawStatCard(canvas, typeface, 35f, startY, cardWidth, cardHeight, "کل مخارج پروژه", Formatters.formatCurrency(analytics.grandTotalProjectCost), "#6366F1")
+        val grandTotalCardStr = if (analytics.grandTotalProjectCost < 0L) "بدهکار: ${Formatters.formatCurrency(-analytics.grandTotalProjectCost)}" else Formatters.formatCurrency(analytics.grandTotalProjectCost)
+        drawStatCard(canvas, typeface, 35f, startY, cardWidth, cardHeight, "کل مخارج پروژه", grandTotalCardStr, if (analytics.grandTotalProjectCost < 0L) "#E11D48" else "#6366F1")
     }
 
     private fun drawTableHeader(canvas: Canvas, typeface: Typeface, y: Float) {
@@ -276,7 +277,7 @@ object PdfExportUtil {
         drawRtlText(canvas, "تخصص / شغل", 515f, y + 4f, headerPaint, 105)
         drawRtlText(canvas, "کارکرد (روز / ساعت)", 325f, y + 4f, headerPaint, 185)
         drawRtlText(canvas, "اضافه کاری", 235f, y + 4f, headerPaint, 85)
-        drawRtlText(canvas, "مزایا / کسورات / سهم", 135f, y + 4f, headerPaint, 95)
+        drawRtlText(canvas, "مزایا / کسورات / سایر", 135f, y + 4f, headerPaint, 95)
         drawRtlText(canvas, "خالص دریافتی", 35f, y + 4f, headerPaint, 95)
     }
 
@@ -321,20 +322,32 @@ object PdfExportUtil {
         }
         drawRtlText(canvas, otStr, 235f, y + 3f, textPaint, 85)
 
-        // 6. Net allowances / deductions / group share
+        // 6. Net allowances / deductions / group share (با نمایش جداگانه «سایر» در صورت وجود)
         val netAdjust = p.totalAllowances - p.totalDeductions - p.groupExpenseShare
-        val adjustStr = if (netAdjust > 0L) "+${Formatters.formatCurrency(netAdjust)}" else if (netAdjust < 0L) Formatters.formatCurrency(netAdjust) else "۰"
+        val baseAdjustStr = if (netAdjust > 0L) "+${Formatters.formatCurrency(netAdjust)}" else if (netAdjust < 0L) Formatters.formatCurrency(netAdjust) else "۰"
+        val otherNet = p.otherAllowanceTotal - p.otherDeductionTotal
+        val hasOther = p.otherAllowanceTotal > 0L || p.otherDeductionTotal > 0L
+        val adjustStr = if (hasOther) {
+            val otherSign = if (otherNet > 0L) "+" else ""
+            "$baseAdjustStr (سایر: $otherSign${Formatters.formatCurrency(otherNet)})"
+        } else {
+            baseAdjustStr
+        }
         val adjustPaint = TextPaint(textPaint).apply {
             color = if (netAdjust > 0L) Color.parseColor("#059669") else if (netAdjust < 0L) Color.parseColor("#E11D48") else Color.parseColor("#64748B")
+            if (hasOther) textSize = 7.2f
         }
         drawRtlText(canvas, adjustStr, 135f, y + 3f, adjustPaint, 95)
 
         // 7. Net Payout (Leftmost)
+        val isDebt = p.debtAmount > 0L
+        val payoutStr = if (isDebt) "بدهکار: ${Formatters.formatCurrency(p.debtAmount)}" else Formatters.formatCurrency(p.netPayout)
         val payoutPaint = TextPaint(textPaint).apply {
             isFakeBoldText = true
-            color = Color.parseColor("#047857")
+            color = if (isDebt) Color.parseColor("#E11D48") else Color.parseColor("#047857")
+            if (isDebt) textSize = 7.5f
         }
-        drawRtlText(canvas, Formatters.formatCurrency(p.netPayout), 35f, y + 3f, payoutPaint, 95)
+        drawRtlText(canvas, payoutStr, 35f, y + 3f, payoutPaint, 95)
     }
 
     private fun drawSummaryAndExpensesBox(
@@ -342,11 +355,12 @@ object PdfExportUtil {
         typeface: Typeface,
         y: Float,
         analytics: DashboardAnalytics,
+        performances: List<WorkerPerformance>,
         expenses: List<ExpenseEntity>
     ) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         paint.color = Color.parseColor("#F8FAFC")
-        val expBox = RectF(MARGIN_LEFT, y, MARGIN_RIGHT, y + 62f)
+        val expBox = RectF(MARGIN_LEFT, y, MARGIN_RIGHT, y + 68f)
         canvas.drawRoundRect(expBox, 8f, 8f, paint)
 
         paint.color = Color.parseColor("#E2E8F0")
@@ -369,18 +383,32 @@ object PdfExportUtil {
         }
 
         // Line 1 in Landscape (3 columns across 772f)
-        drawRtlText(canvas, "• کل ساعات کارکرد عادی: ${Formatters.toPersianDigits(analytics.totalWorkHours)} ساعت", 540f, y + 26f, itemPaint, 250)
-        drawRtlText(canvas, "• کل ساعات اضافه کاری: ${Formatters.toPersianDigits(analytics.totalOvertimeHours)} ساعت", 285f, y + 26f, itemPaint, 240)
-        drawRtlText(canvas, "• دستمزد ساعتی پرداختی: ${Formatters.formatCurrency(analytics.totalHourlyPaid)}", 45f, y + 26f, itemPaint, 230)
+        drawRtlText(canvas, "• کل ساعات کارکرد عادی: ${Formatters.toPersianDigits(analytics.totalWorkHours)} ساعت", 540f, y + 24f, itemPaint, 250)
+        drawRtlText(canvas, "• کل ساعات اضافه کاری: ${Formatters.toPersianDigits(analytics.totalOvertimeHours)} ساعت", 285f, y + 24f, itemPaint, 240)
+        drawRtlText(canvas, "• دستمزد ساعتی پرداختی: ${Formatters.formatCurrency(analytics.totalHourlyPaid)}", 45f, y + 24f, itemPaint, 230)
 
         // Line 2
-        drawRtlText(canvas, "• تعداد روزهای کاری کارگاه: ${Formatters.toPersianDigits(analytics.totalWorkDaysCount)} روز تقویمی", 540f, y + 44f, itemPaint, 250)
-        drawRtlText(canvas, "• مجموع کارکرد پرسنل: ${Formatters.toPersianDigits(analytics.totalPersonDays)} نفر-روز (شیفت)", 285f, y + 44f, itemPaint, 240)
+        drawRtlText(canvas, "• تعداد روزهای کاری کارگاه: ${Formatters.toPersianDigits(analytics.totalWorkDaysCount)} روز تقویمی", 540f, y + 39f, itemPaint, 250)
+        drawRtlText(canvas, "• مجموع کارکرد پرسنل: ${Formatters.toPersianDigits(analytics.totalPersonDays)} نفر-روز (شیفت)", 285f, y + 39f, itemPaint, 240)
         val grandTotalPaint = TextPaint(itemPaint).apply {
             isFakeBoldText = true
-            color = Color.parseColor("#4338CA")
+            color = if (analytics.grandTotalProjectCost < 0L) Color.parseColor("#E11D48") else Color.parseColor("#4338CA")
         }
-        drawRtlText(canvas, "• هزینه کل نهایی پروژه: ${Formatters.formatCurrency(analytics.grandTotalProjectCost)}", 45f, y + 44f, grandTotalPaint, 230)
+        val grandTotalText = if (analytics.grandTotalProjectCost < 0L) "بدهکار: ${Formatters.formatCurrency(-analytics.grandTotalProjectCost)}" else Formatters.formatCurrency(analytics.grandTotalProjectCost)
+        drawRtlText(canvas, "• هزینه کل نهایی پروژه: $grandTotalText", 45f, y + 39f, grandTotalPaint, 230)
+
+        // Line 3
+        val debtPaint = TextPaint(itemPaint).apply {
+            isFakeBoldText = analytics.totalWorkerDebt > 0L
+            color = if (analytics.totalWorkerDebt > 0L) Color.parseColor("#E11D48") else Color.parseColor("#334155")
+        }
+        val debtText = if (analytics.totalWorkerDebt > 0L) "بدهکار: ${Formatters.formatCurrency(analytics.totalWorkerDebt)}" else "۰ تومان"
+        drawRtlText(canvas, "• مجموع بدهی کارگران: $debtText", 540f, y + 54f, debtPaint, 250)
+
+        val totalOtherAllowances = performances.sumOf { it.otherAllowanceTotal }
+        val totalOtherDeductions = performances.sumOf { it.otherDeductionTotal }
+        drawRtlText(canvas, "• سایر مزایا (فردی): ${Formatters.formatCurrency(totalOtherAllowances)}", 285f, y + 54f, itemPaint, 240)
+        drawRtlText(canvas, "• سایر کسورات (فردی): ${Formatters.formatCurrency(totalOtherDeductions)}", 45f, y + 54f, itemPaint, 230)
     }
 
     private fun drawSignatures(canvas: Canvas, typeface: Typeface, y: Float, foremanName: String, employerName: String) {

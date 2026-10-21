@@ -22,6 +22,12 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE folderId = :folderId AND workerId = :workerId ORDER BY timestamp DESC")
     fun getExpensesForWorker(folderId: Long, workerId: Long): Flow<List<ExpenseEntity>>
 
+    @Query("SELECT * FROM expenses WHERE folderId = :folderId AND workerId = :workerId")
+    suspend fun getExpensesForWorkerSync(folderId: Long, workerId: Long): List<ExpenseEntity>
+
+    @Query("SELECT * FROM expenses WHERE folderId = :folderId AND date = :date")
+    suspend fun getExpensesForDateInFolderSync(folderId: Long, date: String): List<ExpenseEntity>
+
     @Query("SELECT * FROM expenses WHERE folderId = :folderId AND scope = 'GROUP' ORDER BY timestamp DESC")
     fun getGroupExpensesByFolder(folderId: Long): Flow<List<ExpenseEntity>>
 

@@ -179,4 +179,89 @@ class WorkerSyncUpdateTest {
         assertEquals(6.0, storedAtt.hourlyHours, 0.001)
         assertEquals(2.0, storedAtt.overtimeHours, 0.001)
     }
+
+    @Test
+    fun testEditWorkerOnSpecificDay_onlyAffectsThatDay_andPreservesPreviousAndOtherDays() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val db = AppDatabase.getDatabase(app)
+        val repository = WorkerRepository(db)
+
+        db.attendanceDao().clearAll()
+        db.expenseDao().clearAll()
+        db.workerDao().clearAll()
+        db.dateFolderDao().clearAll()
+        db.folderDao().clearAll()
+
+        val folderId = repository.insertFolder(
+            WorkplaceFolderEntity(name = "کارگاه استقلال روزها")
+        )
+
+        val worker = WorkerEntity(
+            folderId = folderId,
+            name = "مهدی حسینی",
+            role = "بنا",
+            baseDailyWage = 1000000L,
+            transitAllowance = 50000L,
+            transitImpact = "ALLOWANCE",
+            foodAllowance = 80000L,
+            foodImpact = "ALLOWANCE",
+            accommodationAllowance = 100000L,
+            accommodationImpact = "DEDUCTION"
+        )
+        val workerId = repository.insertWorker(worker)
+        val savedWorkerInitial = worker.copy(id = workerId)
+
+        // Day 1: created via createNextDay (hasCustomAllowances = true, matches initial profile)
+        repository.createNextDay(folderId = folderId, date = "1403/07/01", dayOfWeek = "یکشنبه")
+
+        // Day 2: created via createNextDay
+        repository.createNextDay(folderId = folderId, date = "1403/07/02", dayOfWeek = "دوشنبه")
+
+        // User edits worker on Day 2 only (changing wage and allowances on Day 2)
+        val day2Before = db.attendanceDao().getAttendanceForWorkerAndDate(workerId, "1403/07/02")!!
+        val editedDay2Att = day2Before.copy(
+            dailyWage = 1200000L,
+            transitAllowance = 90000L,
+            transitImpact = "ALLOWANCE",
+            foodAllowance = 120000L,
+            foodImpact = "ALLOWANCE",
+            accommodationAllowance = 150000L,
+            accommodationImpact = "DEDUCTION",
+            medicalAllowance = 40000L,
+            medicalImpact = "ALLOWANCE",
+            hasCustomAllowances = true
+        )
+        repository.updateWorker(
+            worker = savedWorkerInitial,
+            dayAttendance = editedDay2Att
+        )
+
+        val attDay1 = db.attendanceDao().getAttendanceForWorkerAndDate(workerId, "1403/07/01")!!
+        val attDay2 = db.attendanceDao().getAttendanceForWorkerAndDate(workerId, "1403/07/02")!!
+
+        // Day 1 must remain 100% untouched (1,000,000 wage, 50k transit, 80k food, 100k accom deduction, 0 medical)
+        org.junit.Assert.assertTrue(attDay1.hasCustomAllowances)
+        assertEquals(1000000L, attDay1.dailyWage)
+        assertEquals(50000L, attDay1.transitAllowance)
+        assertEquals(80000L, attDay1.foodAllowance)
+        assertEquals(100000L, attDay1.accommodationAllowance)
+        assertEquals("DEDUCTION", attDay1.accommodationImpact)
+        assertEquals(0L, attDay1.medicalAllowance)
+
+        val day1Calc = com.karyar.app.util.WageCalculator.calculateDay(savedWorkerInitial, attDay1)
+        // 1,000,000 + (50,000 + 80,000) - 100,000 = 1,030,000
+        assertEquals(1030000L, day1Calc.netPayout)
+
+        // Day 2 has its own independent updated values
+        org.junit.Assert.assertTrue(attDay2.hasCustomAllowances)
+        assertEquals(1200000L, attDay2.dailyWage)
+        assertEquals(90000L, attDay2.transitAllowance)
+        assertEquals(120000L, attDay2.foodAllowance)
+        assertEquals(150000L, attDay2.accommodationAllowance)
+        assertEquals(40000L, attDay2.medicalAllowance)
+
+        val day2Calc = com.karyar.app.util.WageCalculator.calculateDay(savedWorkerInitial, attDay2)
+        // 1,200,000 + (90,000 + 120,000 + 40,000) - 150,000 = 1,300,000
+        assertEquals(1300000L, day2Calc.netPayout)
+    }
 }

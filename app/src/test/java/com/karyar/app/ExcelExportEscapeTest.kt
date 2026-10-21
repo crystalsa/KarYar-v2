@@ -68,4 +68,47 @@ class ExcelExportEscapeTest {
         val expected = "\"  متن با فاصله  \""
         assertEquals(expected, ExcelExportUtil.escapeCsv(input))
     }
+
+    @Test
+    fun testExportCsvIncludesSeparateOtherAllowanceAndDeductionColumns() {
+        val tempDir = java.nio.file.Files.createTempDirectory("karyar_csv_test").toFile()
+        val testContext = object : android.content.ContextWrapper(null) {
+            override fun getCacheDir(): java.io.File = tempDir
+        }
+
+        val worker = com.karyar.app.data.local.entity.WorkerEntity(
+            id = 55L,
+            folderId = 1L,
+            name = "رضا صادقی",
+            role = "استادکار",
+            baseDailyWage = 1_000_000L
+        )
+        val perf = com.karyar.app.domain.model.WorkerPerformance(
+            worker = worker,
+            totalShifts = 1,
+            regularHours = 8.0,
+            overtimeHours = 0.0,
+            baseWageTotal = 1_000_000L,
+            overtimePayTotal = 0L,
+            totalAllowances = 170_000L,
+            transitAllowanceTotal = 50_000L,
+            otherAllowanceTotal = 120_000L,
+            totalDeductions = 90_000L,
+            otherDeductionTotal = 90_000L,
+            netPayout = 1_080_000L
+        )
+
+        val csvFile = ExcelExportUtil.exportToExcelCsv(
+            context = testContext,
+            workers = listOf(worker),
+            attendanceList = emptyList(),
+            performances = listOf(perf),
+            projectName = "کارگاه تست سایر"
+        )
+
+        val csvText = csvFile.readText(Charsets.UTF_8)
+        org.junit.Assert.assertTrue(csvText.contains("کمک‌هزینه‌ها (تومان),سایر مزایا (تومان),کسورات (تومان),سایر کسورات (تومان)"))
+        org.junit.Assert.assertTrue(csvText.contains(",170000,120000,90000,90000,"))
+        tempDir.deleteRecursively()
+    }
 }

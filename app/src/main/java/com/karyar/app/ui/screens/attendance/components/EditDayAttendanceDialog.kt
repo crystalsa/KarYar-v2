@@ -73,11 +73,12 @@ fun EditDayAttendanceDialog(
     onDismiss: () -> Unit,
     onConfirm: (AttendanceEntity) -> Unit
 ) {
+    val useAttAllowances = attendance != null && attendance.hasCustomAllowances
     val initialStatus = attendance?.status ?: if (worker.isHourlyEnabled) AttendanceStatus.HOURLY else AttendanceStatus.FULL_DAY
     var status by remember { mutableStateOf(initialStatus) }
 
     // Hourly work hours
-    val initialHourlyHours = if (attendance != null && attendance.hourlyHours > 0.0) {
+    val initialHourlyHours = if (attendance != null && (attendance.hourlyHours > 0.0 || useAttAllowances)) {
         attendance.hourlyHours.toString().removeSuffix(".0")
     } else if (worker.hourlyHours > 0.0) {
         worker.hourlyHours.toString().removeSuffix(".0")
@@ -85,11 +86,15 @@ fun EditDayAttendanceDialog(
     var hourlyHoursStr by remember { mutableStateOf(initialHourlyHours) }
 
     // Overtime hours
-    val hasInitOt = (attendance != null && attendance.overtimeHours > 0.0) || worker.isOvertimeEnabled
+    val hasInitOt = if (attendance != null) {
+        attendance.overtimeHours > 0.0
+    } else {
+        worker.isOvertimeEnabled && (worker.overtimeHours > 0.0 || worker.overtimeRate > 0L)
+    }
     var hasOvertime by remember { mutableStateOf(hasInitOt) }
 
-    val initialOtHours = if (attendance != null && attendance.overtimeHours > 0.0) {
-        attendance.overtimeHours.toString().removeSuffix(".0")
+    val initialOtHours = if (attendance != null && (attendance.overtimeHours > 0.0 || useAttAllowances)) {
+        if (attendance.overtimeHours > 0.0) attendance.overtimeHours.toString().removeSuffix(".0") else ""
     } else if (worker.overtimeHours > 0.0) {
         worker.overtimeHours.toString().removeSuffix(".0")
     } else ""
@@ -97,33 +102,64 @@ fun EditDayAttendanceDialog(
 
     var notes by remember { mutableStateOf(attendance?.notes ?: "") }
 
-    val initWage = if (attendance != null && attendance.dailyWage > 0L) attendance.dailyWage else worker.baseDailyWage
+    val initWage = if (useAttAllowances) {
+        attendance!!.dailyWage
+    } else if (attendance != null && attendance.dailyWage > 0L) {
+        attendance.dailyWage
+    } else if (initialStatus == AttendanceStatus.HALF_DAY) {
+        WageCalculator.roundToLong(worker.baseDailyWage / 2.0)
+    } else {
+        worker.baseDailyWage
+    }
+    var isDailyWageEnabled by remember {
+        mutableStateOf(
+            if (useAttAllowances) {
+                attendance!!.dailyWage > 0L
+            } else {
+                initialStatus != AttendanceStatus.HOURLY && initialStatus != AttendanceStatus.ABSENT && initWage > 0L
+            }
+        )
+    }
     var dailyWageStr by remember { mutableStateOf(if (initWage > 0L) Formatters.formatThousandsPersian(initWage) else "") }
 
-    val initHourlyRate = if (attendance != null && attendance.hourlyWageRate > 0L) attendance.hourlyWageRate else (if (worker.hourlyWageRate > 0L) worker.hourlyWageRate else worker.baseHourlyWage)
+    val initHourlyRate = if (useAttAllowances) {
+        if (attendance!!.hourlyWageRate > 0L) attendance.hourlyWageRate else attendance.hourlyWage
+    } else if (attendance != null && attendance.hourlyWageRate > 0L) {
+        attendance.hourlyWageRate
+    } else if (worker.hourlyWageRate > 0L) {
+        worker.hourlyWageRate
+    } else {
+        worker.baseHourlyWage
+    }
     var hourlyWageRateStr by remember { mutableStateOf(if (initHourlyRate > 0L) Formatters.formatThousandsPersian(initHourlyRate) else "") }
 
-    val initOtRate = if (attendance != null && attendance.overtimeRate > 0L) attendance.overtimeRate else worker.overtimeRate
+    val initOtRate = if (useAttAllowances) {
+        attendance!!.overtimeRate
+    } else if (attendance != null && attendance.overtimeRate > 0L) {
+        attendance.overtimeRate
+    } else {
+        worker.overtimeRate
+    }
     var overtimeRateStr by remember { mutableStateOf(if (initOtRate > 0L) Formatters.formatThousandsPersian(initOtRate) else "") }
 
     // Custom Daily Allowances
-    val initTransit = if (attendance != null && attendance.hasCustomAllowances) attendance.transitAllowance else worker.transitAllowance
-    val initTransitImpact = if (attendance != null && attendance.hasCustomAllowances) attendance.transitImpact else worker.transitImpact
+    val initTransit = if (useAttAllowances) attendance!!.transitAllowance else worker.transitAllowance
+    val initTransitImpact = if (useAttAllowances) attendance!!.transitImpact else worker.transitImpact
     var transitAllowanceStr by remember { mutableStateOf(if (initTransit > 0L) Formatters.formatThousandsPersian(initTransit) else "") }
     var transitImpact by remember { mutableStateOf(initTransitImpact) }
 
-    val initFood = if (attendance != null && attendance.hasCustomAllowances) attendance.foodAllowance else worker.foodAllowance
-    val initFoodImpact = if (attendance != null && attendance.hasCustomAllowances) attendance.foodImpact else worker.foodImpact
+    val initFood = if (useAttAllowances) attendance!!.foodAllowance else worker.foodAllowance
+    val initFoodImpact = if (useAttAllowances) attendance!!.foodImpact else worker.foodImpact
     var foodAllowanceStr by remember { mutableStateOf(if (initFood > 0L) Formatters.formatThousandsPersian(initFood) else "") }
     var foodImpact by remember { mutableStateOf(initFoodImpact) }
 
-    val initAccom = if (attendance != null && attendance.hasCustomAllowances) attendance.accommodationAllowance else worker.accommodationAllowance
-    val initAccomImpact = if (attendance != null && attendance.hasCustomAllowances) attendance.accommodationImpact else worker.accommodationImpact
+    val initAccom = if (useAttAllowances) attendance!!.accommodationAllowance else worker.accommodationAllowance
+    val initAccomImpact = if (useAttAllowances) attendance!!.accommodationImpact else worker.accommodationImpact
     var accommodationAllowanceStr by remember { mutableStateOf(if (initAccom > 0L) Formatters.formatThousandsPersian(initAccom) else "") }
     var accommodationImpact by remember { mutableStateOf(initAccomImpact) }
 
-    val initMed = if (attendance != null && attendance.hasCustomAllowances) attendance.medicalAllowance else worker.medicalAllowance
-    val initMedImpact = if (attendance != null && attendance.hasCustomAllowances) attendance.medicalImpact else worker.medicalImpact
+    val initMed = if (useAttAllowances) attendance!!.medicalAllowance else worker.medicalAllowance
+    val initMedImpact = if (useAttAllowances) attendance!!.medicalImpact else worker.medicalImpact
     var medicalAllowanceStr by remember { mutableStateOf(if (initMed > 0L) Formatters.formatThousandsPersian(initMed) else "") }
     var medicalImpact by remember { mutableStateOf(initMedImpact) }
 
@@ -204,21 +240,39 @@ fun EditDayAttendanceDialog(
                         label = "تمام روز",
                         selected = status == AttendanceStatus.FULL_DAY,
                         color = EmeraldAccent,
-                        onClick = { status = AttendanceStatus.FULL_DAY },
+                        onClick = {
+                            status = AttendanceStatus.FULL_DAY
+                            if (!isDailyWageEnabled && dailyWageStr.isBlank() && worker.baseDailyWage > 0L) {
+                                isDailyWageEnabled = true
+                                dailyWageStr = Formatters.formatThousandsPersian(worker.baseDailyWage)
+                            }
+                        },
                         modifier = Modifier.weight(1f)
                     )
                     StatusChip(
                         label = "نصف روز",
                         selected = status == AttendanceStatus.HALF_DAY,
                         color = AmberAccent,
-                        onClick = { status = AttendanceStatus.HALF_DAY },
+                        onClick = {
+                            status = AttendanceStatus.HALF_DAY
+                            if (!isDailyWageEnabled && dailyWageStr.isBlank() && worker.baseDailyWage > 0L) {
+                                isDailyWageEnabled = true
+                                dailyWageStr = Formatters.formatThousandsPersian(WageCalculator.roundToLong(worker.baseDailyWage / 2.0))
+                            }
+                        },
                         modifier = Modifier.weight(1f)
                     )
                     StatusChip(
                         label = "ساعتی",
                         selected = status == AttendanceStatus.HOURLY,
                         color = CyanAccent,
-                        onClick = { status = AttendanceStatus.HOURLY },
+                        onClick = {
+                            status = AttendanceStatus.HOURLY
+                            if (hourlyWageRateStr.isBlank()) {
+                                val r = if (worker.hourlyWageRate > 0L) worker.hourlyWageRate else worker.baseHourlyWage
+                                if (r > 0L) hourlyWageRateStr = Formatters.formatThousandsPersian(r)
+                            }
+                        },
                         modifier = Modifier.weight(1f)
                     )
                     StatusChip(
@@ -231,6 +285,66 @@ fun EditDayAttendanceDialog(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
+
+                // دستمزد روزانه این روز (با تیک‌باکس روشن/خاموش و قابلیت صفر کردن)
+                AnimatedVisibility(visible = status == AttendanceStatus.FULL_DAY || status == AttendanceStatus.HALF_DAY) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Slate100,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isDailyWageEnabled = !isDailyWageEnabled },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = isDailyWageEnabled,
+                                        onCheckedChange = { isDailyWageEnabled = it },
+                                        colors = CheckboxDefaults.colors(checkedColor = AmberAccent),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "ثبت دستمزد روزانه برای این روز",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isDailyWageEnabled) AmberAccent else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                if (isDailyWageEnabled && dailyWageStr.isNotBlank()) {
+                                    Text(
+                                        text = Formatters.formatCurrency(Formatters.parsePrice(dailyWageStr)),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AmberAccent
+                                    )
+                                }
+                            }
+
+                            AnimatedVisibility(visible = isDailyWageEnabled) {
+                                Column {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    OutlinedTextField(
+                                        value = dailyWageStr,
+                                        onValueChange = { dailyWageStr = Formatters.formatPriceInput(it) },
+                                        label = { Text("دستمزد روزانه این روز (تومان)", fontSize = 11.sp) },
+                                        placeholder = { Text("مثلاً ۱,۲۰۰,۰۰۰ یا ۰", fontSize = 11.sp) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // اگر وضعیت ساعتی است: تنظیم دقیق ساعات کارکرد ساعتی این روز
                 AnimatedVisibility(visible = status == AttendanceStatus.HOURLY || status == AttendanceStatus.HALF_DAY) {
@@ -270,7 +384,7 @@ fun EditDayAttendanceDialog(
                                         .replace(',', '.')
                                     hourlyHoursStr = normalized.filter { it.isDigit() || it == '.' }
                                 },
-                                label = { Text("ساعت کارکرد (مثلاً ۵ یا ۵.۵)", fontSize = 11.sp) },
+                                label = { Text("ساعت کارکرد (مثلاً ۵ یا ۰)", fontSize = 11.sp) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true
@@ -331,7 +445,7 @@ fun EditDayAttendanceDialog(
                                                 .replace(',', '.')
                                             overtimeHoursStr = normalized.filter { it.isDigit() || it == '.' }
                                         },
-                                        label = { Text("تعداد ساعت اضافه کار (مثلاً ۲ یا ۰.۵)", fontSize = 11.sp) },
+                                        label = { Text("تعداد ساعت اضافه کار (مثلاً ۲ یا ۰)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         modifier = Modifier.fillMaxWidth(),
                                         singleLine = true
@@ -379,13 +493,10 @@ fun EditDayAttendanceDialog(
                                     .padding(top = 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                if (status == AttendanceStatus.FULL_DAY || status == AttendanceStatus.HALF_DAY) {
+                                if ((status == AttendanceStatus.FULL_DAY || status == AttendanceStatus.HALF_DAY) && isDailyWageEnabled) {
                                     OutlinedTextField(
                                         value = dailyWageStr,
-                                        onValueChange = { input ->
-                                            val digits = Formatters.toEnglishDigits(input).filter { it.isDigit() }
-                                            dailyWageStr = if (digits.isNotBlank()) Formatters.formatThousandsPersian(digits.toLong()) else ""
-                                        },
+                                        onValueChange = { dailyWageStr = Formatters.formatPriceInput(it) },
                                         label = { Text("دستمزد روزانه این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.fillMaxWidth(),
@@ -396,10 +507,7 @@ fun EditDayAttendanceDialog(
                                 if (status == AttendanceStatus.HOURLY) {
                                     OutlinedTextField(
                                         value = hourlyWageRateStr,
-                                        onValueChange = { input ->
-                                            val digits = Formatters.toEnglishDigits(input).filter { it.isDigit() }
-                                            hourlyWageRateStr = if (digits.isNotBlank()) Formatters.formatThousandsPersian(digits.toLong()) else ""
-                                        },
+                                        onValueChange = { hourlyWageRateStr = Formatters.formatPriceInput(it) },
                                         label = { Text("مبلغ هر ساعت کار این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.fillMaxWidth(),
@@ -410,10 +518,7 @@ fun EditDayAttendanceDialog(
                                 if (hasOvertime) {
                                     OutlinedTextField(
                                         value = overtimeRateStr,
-                                        onValueChange = { input ->
-                                            val digits = Formatters.toEnglishDigits(input).filter { it.isDigit() }
-                                            overtimeRateStr = if (digits.isNotBlank()) Formatters.formatThousandsPersian(digits.toLong()) else ""
-                                        },
+                                        onValueChange = { overtimeRateStr = Formatters.formatPriceInput(it) },
                                         label = { Text("نرخ اضافه کار این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.fillMaxWidth(),
@@ -429,10 +534,7 @@ fun EditDayAttendanceDialog(
                                 ) {
                                     OutlinedTextField(
                                         value = accommodationAllowanceStr,
-                                        onValueChange = { input ->
-                                            val digits = Formatters.toEnglishDigits(input).filter { it.isDigit() }
-                                            accommodationAllowanceStr = if (digits.isNotBlank()) Formatters.formatThousandsPersian(digits.toLong()) else ""
-                                        },
+                                        onValueChange = { accommodationAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("کمک‌هزینه مسکن این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
@@ -454,10 +556,7 @@ fun EditDayAttendanceDialog(
                                 ) {
                                     OutlinedTextField(
                                         value = foodAllowanceStr,
-                                        onValueChange = { input ->
-                                            val digits = Formatters.toEnglishDigits(input).filter { it.isDigit() }
-                                            foodAllowanceStr = if (digits.isNotBlank()) Formatters.formatThousandsPersian(digits.toLong()) else ""
-                                        },
+                                        onValueChange = { foodAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("کمک‌هزینه خوراک این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
@@ -479,10 +578,7 @@ fun EditDayAttendanceDialog(
                                 ) {
                                     OutlinedTextField(
                                         value = transitAllowanceStr,
-                                        onValueChange = { input ->
-                                            val digits = Formatters.toEnglishDigits(input).filter { it.isDigit() }
-                                            transitAllowanceStr = if (digits.isNotBlank()) Formatters.formatThousandsPersian(digits.toLong()) else ""
-                                        },
+                                        onValueChange = { transitAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("ایاب و ذهاب این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
@@ -504,10 +600,7 @@ fun EditDayAttendanceDialog(
                                 ) {
                                     OutlinedTextField(
                                         value = medicalAllowanceStr,
-                                        onValueChange = { input ->
-                                            val digits = Formatters.toEnglishDigits(input).filter { it.isDigit() }
-                                            medicalAllowanceStr = if (digits.isNotBlank()) Formatters.formatThousandsPersian(digits.toLong()) else ""
-                                        },
+                                        onValueChange = { medicalAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("کمک‌هزینه درمان این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f),
@@ -554,16 +647,11 @@ fun EditDayAttendanceDialog(
 
                             val otHours = if (status != AttendanceStatus.ABSENT && hasOvertime) parsedOtHours else 0.0
 
-                            val parsedDailyWage = if (dailyWageStr.isNotBlank()) Formatters.parsePrice(dailyWageStr)
-                                else when (status) {
-                                    AttendanceStatus.FULL_DAY -> worker.baseDailyWage
-                                    AttendanceStatus.HALF_DAY -> WageCalculator.roundToLong(worker.baseDailyWage / 2.0)
-                                    else -> 0L
-                                }
-                            val parsedHourlyRate = if (hourlyWageRateStr.isNotBlank()) Formatters.parsePrice(hourlyWageRateStr)
-                                else if (worker.hourlyWageRate > 0) worker.hourlyWageRate else worker.baseHourlyWage
-                            val parsedOtRate = if (overtimeRateStr.isNotBlank()) Formatters.parsePrice(overtimeRateStr)
-                                else if (worker.overtimeRate > 0) worker.overtimeRate else 0L
+                            val parsedDailyWage = if (isDailyWageEnabled && (status == AttendanceStatus.FULL_DAY || status == AttendanceStatus.HALF_DAY)) {
+                                Formatters.parsePrice(dailyWageStr)
+                            } else 0L
+                            val parsedHourlyRate = if (status == AttendanceStatus.HOURLY) Formatters.parsePrice(hourlyWageRateStr) else 0L
+                            val parsedOtRate = if (status != AttendanceStatus.ABSENT && hasOvertime) Formatters.parsePrice(overtimeRateStr) else 0L
 
                             val updated = baseAtt.copy(
                                 status = status,

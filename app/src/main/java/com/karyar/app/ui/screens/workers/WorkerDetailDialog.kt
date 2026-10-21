@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -152,20 +153,37 @@ fun WorkerDetailDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Status badge: مشغول به کار یا غایب
+                // Status badge & Debt badge
                 val isWorkerAbsent = WageCalculator.isAbsent(worker, attendance)
-                StatusBadge(
-                    text = when {
-                        isWorkerAbsent -> "غایب"
-                        worker.isActive -> "مشغول به کار"
-                        else -> "مرخصی"
-                    },
-                    dotColor = when {
-                        isWorkerAbsent -> RoseAccent
-                        worker.isActive -> EmeraldAccent
-                        else -> Slate400
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StatusBadge(
+                        text = when {
+                            isWorkerAbsent -> "غایب"
+                            worker.isActive -> "مشغول به کار"
+                            else -> "مرخصی"
+                        },
+                        dotColor = when {
+                            isWorkerAbsent -> RoseAccent
+                            worker.isActive -> EmeraldAccent
+                            else -> Slate400
+                        }
+                    )
+                    if (performance != null && performance.debtAmount > 0L) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = RoseAccent.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                text = "بدهکار: ${Formatters.formatCurrency(performance.debtAmount)}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = RoseAccent,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
+                            )
+                        }
                     }
-                )
+                }
 
                 // شماره تلفن: زیر مشغول به کار و بالای کد ملی
                 if (worker.phone.isNotBlank()) {
@@ -302,6 +320,30 @@ fun WorkerDetailDialog(
                             )
                         }
 
+                        if (performance != null && performance.otherAllowanceTotal > 0L) {
+                            CompactDetailRow(
+                                label = "(+) سایر (افزایشی):",
+                                value = "+${Formatters.formatCurrency(performance.otherAllowanceTotal)}",
+                                valueColor = EmeraldAccent
+                            )
+                        }
+
+                        if (performance != null && performance.otherDeductionTotal > 0L) {
+                            CompactDetailRow(
+                                label = "(-) سایر (کسورات):",
+                                value = "-${Formatters.formatCurrency(performance.otherDeductionTotal)}",
+                                valueColor = RoseAccent
+                            )
+                        }
+
+                        if (performance != null && performance.debtAmount > 0L) {
+                            CompactDetailRow(
+                                label = "وضعیت تسویه کارگر:",
+                                value = "بدهکار: ${Formatters.formatCurrency(performance.debtAmount)}",
+                                valueColor = RoseAccent
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -316,8 +358,10 @@ fun WorkerDetailDialog(
                             )
                             Text(
                                 text = if (isAbsent) {
-                                    if (dayCalc.totalDeductions > 0) "-${Formatters.formatCurrency(dayCalc.totalDeductions)} (کسورات غیبت)"
+                                    if (dayCalc.totalDeductions > 0) "بدهکار: ${Formatters.formatCurrency(dayCalc.totalDeductions)} (کسورات غیبت)"
                                     else "۰ تومان (غیبت)"
+                                } else if (dayCalc.netPayout < 0L) {
+                                    "بدهکار: ${Formatters.formatCurrency(-dayCalc.netPayout)}"
                                 } else Formatters.formatCurrency(dayCalc.netPayout),
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 13.5.sp,

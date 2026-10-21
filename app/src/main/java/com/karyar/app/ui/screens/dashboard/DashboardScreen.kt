@@ -217,9 +217,10 @@ fun DashboardScreen(
     val totalProjectHours = remember(workerPerformances) { workerPerformances.sumOf { it.regularHours + it.hourlyHours + it.overtimeHours } }
     val totalProjectAllowances = remember(workerPerformances) { workerPerformances.sumOf { it.totalAllowances } }
     val totalProjectDeductions = remember(workerPerformances) { workerPerformances.sumOf { it.totalDeductions } }
-    val totalProjectNetPayout = remember(workerPerformances, analytics) {
-        val fromPerf = workerPerformances.sumOf { it.netPayoutBeforeGroup }
-        if (fromPerf > 0L) fromPerf else analytics.grandTotalProjectCost
+    val totalProjectNetPayout = analytics.grandTotalProjectCost
+    val totalProjectWorkerDebt = remember(workerPerformances, analytics) {
+        val fromPerf = workerPerformances.sumOf { it.debtAmount }
+        if (fromPerf > 0L) fromPerf else analytics.totalWorkerDebt
     }
 
     // مجموع تمام نفرات کارکرده در تمامی روزهای پروژه (نفر-روز)
@@ -292,6 +293,14 @@ fun DashboardScreen(
                                         fontSize = 10.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    if (totalProjectWorkerDebt > 0L) {
+                                        Text(
+                                            text = "مجموع بدهی کارگران: بدهکار: ${Formatters.formatCurrency(totalProjectWorkerDebt)}",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = RoseAccent
+                                        )
+                                    }
                                 }
 
                                 Row(
@@ -299,10 +308,10 @@ fun DashboardScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        text = Formatters.formatCurrency(totalProjectNetPayout),
+                                        text = if (totalProjectNetPayout < 0L) "بدهکار: ${Formatters.formatCurrency(-totalProjectNetPayout)}" else Formatters.formatCurrency(totalProjectNetPayout),
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = EmeraldAccent
+                                        color = if (totalProjectNetPayout < 0L) RoseAccent else EmeraldAccent
                                     )
                                     Surface(
                                         shape = CircleShape,
@@ -372,6 +381,19 @@ fun DashboardScreen(
                                             isNegative = true
                                         )
                                     }
+                                    if (analytics.totalGroupExpenses > 0L) {
+                                        ProjectDetailRow(
+                                            title = "مجموع هزینه‌های گروهی کارگاه:",
+                                            amount = analytics.totalGroupExpenses,
+                                            color = RoseAccent,
+                                            isNegative = true
+                                        )
+                                    }
+                                    ProjectDetailRow(
+                                        title = "مجموع بدهی کارگران:",
+                                        amount = totalProjectWorkerDebt,
+                                        color = if (totalProjectWorkerDebt > 0L) RoseAccent else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
@@ -570,16 +592,25 @@ private fun WorkerCumulativePerformanceCard(
                 ) {
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = "کل دریافتی:",
+                            text = if (perf.debtAmount > 0L) "وضعیت حساب:" else "کل دریافتی:",
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text(
-                            text = Formatters.formatCurrency(perf.netPayout),
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = EmeraldAccent
-                        )
+                        if (perf.debtAmount > 0L) {
+                            Text(
+                                text = "بدهکار: ${Formatters.formatCurrency(perf.debtAmount)}",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = RoseAccent
+                            )
+                        } else {
+                            Text(
+                                text = Formatters.formatCurrency(perf.netPayout),
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = EmeraldAccent
+                            )
+                        }
                     }
 
                     // دکمه فلش رو به پایین / بالا با استایل دایره‌ای زیبا
@@ -750,6 +781,13 @@ private fun WorkerCumulativePerformanceCard(
                                         color = IndigoAccent
                                     )
                                 }
+                                if (perf.otherAllowanceTotal > 0L) {
+                                    ProjectDetailRow(
+                                        title = "سایر (افزایشی):",
+                                        amount = perf.otherAllowanceTotal,
+                                        color = IndigoAccent
+                                    )
+                                }
                                 ProjectDetailRow(
                                     title = "مجموع کل افزایش‌ها:",
                                     amount = perf.totalAllowances,
@@ -757,7 +795,7 @@ private fun WorkerCumulativePerformanceCard(
                                 )
                             }
 
-                            // ۶. کل کسورات کاهشی (ایاب و ذهاب کاهشی، مسکن، خوراک، درمان)
+                            // ۶. کل کسورات کاهشی (ایاب و ذهاب کاهشی، مسکن، خوراک، درمان، سایر)
                             if (perf.totalDeductions > 0L) {
                                 HorizontalDivider(thickness = 0.5.dp, color = Slate200)
                                 Text(
@@ -798,6 +836,14 @@ private fun WorkerCumulativePerformanceCard(
                                         isNegative = true
                                     )
                                 }
+                                if (perf.otherDeductionTotal > 0L) {
+                                    ProjectDetailRow(
+                                        title = "کسر سایر:",
+                                        amount = perf.otherDeductionTotal,
+                                        color = RoseAccent,
+                                        isNegative = true
+                                    )
+                                }
                                 ProjectDetailRow(
                                     title = "مجموع کل کسورات:",
                                     amount = perf.totalDeductions,
@@ -810,10 +856,10 @@ private fun WorkerCumulativePerformanceCard(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // ۷. کادر خالص پرداختی نهایی این شخص در کل پروژه
+                    // ۷. کادر خالص پرداختی نهایی یا وضعیت بدهی این شخص در کل پروژه
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = EmeraldAccent.copy(alpha = 0.12f),
+                        color = if (perf.debtAmount > 0L) RoseAccent.copy(alpha = 0.12f) else EmeraldAccent.copy(alpha = 0.12f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -824,16 +870,16 @@ private fun WorkerCumulativePerformanceCard(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "مجموع خالص دریافتی این شخص تا امروز:",
+                                text = if (perf.debtAmount > 0L) "وضعیت تسویه این شخص:" else "مجموع خالص دریافتی این شخص تا امروز:",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = Formatters.formatCurrency(perf.netPayout),
+                                text = if (perf.debtAmount > 0L) "بدهکار: ${Formatters.formatCurrency(perf.debtAmount)}" else Formatters.formatCurrency(perf.netPayout),
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = EmeraldAccent
+                                color = if (perf.debtAmount > 0L) RoseAccent else EmeraldAccent
                             )
                         }
                     }

@@ -113,6 +113,176 @@ class MigrationTest {
         """.trimIndent())
     }
 
+    private fun readWorkers(db: androidx.sqlite.db.SupportSQLiteDatabase): List<com.karyar.app.data.local.entity.WorkerEntity> {
+        val cursor = db.query("""
+            SELECT id, folderId, name, role, phone, nationalId, baseDailyWage, baseHourlyWage,
+                   isHourlyEnabled, hourlyWageRate, hourlyHours, isOvertimeEnabled, overtimeRate, overtimeHours,
+                   isActive, notes, colorTag, transitAllowance, transitImpact, foodAllowance, foodImpact,
+                   accommodationAllowance, accommodationImpact, medicalAllowance, medicalImpact, createdAt
+            FROM workers ORDER BY id ASC
+        """.trimIndent())
+        val list = mutableListOf<com.karyar.app.data.local.entity.WorkerEntity>()
+        while (cursor.moveToNext()) {
+            list.add(
+                com.karyar.app.data.local.entity.WorkerEntity(
+                    id = cursor.getLong(0),
+                    folderId = cursor.getLong(1),
+                    name = cursor.getString(2),
+                    role = cursor.getString(3),
+                    phone = cursor.getString(4),
+                    nationalId = cursor.getString(5),
+                    baseDailyWage = cursor.getLong(6),
+                    baseHourlyWage = cursor.getLong(7),
+                    isHourlyEnabled = cursor.getInt(8) != 0,
+                    hourlyWageRate = cursor.getLong(9),
+                    hourlyHours = cursor.getDouble(10),
+                    isOvertimeEnabled = cursor.getInt(11) != 0,
+                    overtimeRate = cursor.getLong(12),
+                    overtimeHours = cursor.getDouble(13),
+                    isActive = cursor.getInt(14) != 0,
+                    notes = cursor.getString(15),
+                    colorTag = cursor.getLong(16),
+                    transitAllowance = cursor.getLong(17),
+                    transitImpact = cursor.getString(18),
+                    foodAllowance = cursor.getLong(19),
+                    foodImpact = cursor.getString(20),
+                    accommodationAllowance = cursor.getLong(21),
+                    accommodationImpact = cursor.getString(22),
+                    medicalAllowance = cursor.getLong(23),
+                    medicalImpact = cursor.getString(24),
+                    createdAt = cursor.getLong(25)
+                )
+            )
+        }
+        cursor.close()
+        return list
+    }
+
+    private fun readAttendancesV6(db: androidx.sqlite.db.SupportSQLiteDatabase): List<com.karyar.app.data.local.entity.AttendanceEntity> {
+        val cursor = db.query("""
+            SELECT id, folderId, workerId, dateFolderId, date, epochDay, status, timestamp,
+                   entryTime, exitTime, regularHours, overtimeHours, overtimeRate, hourlyWageRate,
+                   hourlyHours, dailyWage, hourlyWage, workplaceName, employerName, foremanName, notes
+            FROM attendance ORDER BY id ASC
+        """.trimIndent())
+        val list = mutableListOf<com.karyar.app.data.local.entity.AttendanceEntity>()
+        while (cursor.moveToNext()) {
+            list.add(
+                com.karyar.app.data.local.entity.AttendanceEntity(
+                    id = cursor.getLong(0),
+                    folderId = cursor.getLong(1),
+                    workerId = cursor.getLong(2),
+                    dateFolderId = cursor.getLong(3),
+                    date = cursor.getString(4),
+                    epochDay = cursor.getLong(5),
+                    status = com.karyar.app.data.local.entity.AttendanceStatus.valueOf(cursor.getString(6)),
+                    timestamp = cursor.getLong(7),
+                    entryTime = cursor.getString(8),
+                    exitTime = cursor.getString(9),
+                    regularHours = cursor.getDouble(10),
+                    overtimeHours = cursor.getDouble(11),
+                    overtimeRate = cursor.getLong(12),
+                    hourlyWageRate = cursor.getLong(13),
+                    hourlyHours = cursor.getDouble(14),
+                    dailyWage = cursor.getLong(15),
+                    hourlyWage = cursor.getLong(16),
+                    workplaceName = cursor.getString(17),
+                    employerName = cursor.getString(18),
+                    foremanName = cursor.getString(19),
+                    notes = cursor.getString(20),
+                    hasCustomAllowances = false
+                )
+            )
+        }
+        cursor.close()
+        return list
+    }
+
+    private fun readAttendancesV7(db: androidx.sqlite.db.SupportSQLiteDatabase): List<com.karyar.app.data.local.entity.AttendanceEntity> {
+        val cursor = db.query("""
+            SELECT id, folderId, workerId, dateFolderId, date, epochDay, status, timestamp,
+                   entryTime, exitTime, regularHours, overtimeHours, overtimeRate, hourlyWageRate,
+                   hourlyHours, dailyWage, hourlyWage, workplaceName, employerName, foremanName, notes,
+                   transitAllowance, transitImpact, foodAllowance, foodImpact,
+                   accommodationAllowance, accommodationImpact, medicalAllowance, medicalImpact,
+                   hasCustomAllowances
+            FROM attendance ORDER BY id ASC
+        """.trimIndent())
+        val list = mutableListOf<com.karyar.app.data.local.entity.AttendanceEntity>()
+        while (cursor.moveToNext()) {
+            list.add(
+                com.karyar.app.data.local.entity.AttendanceEntity(
+                    id = cursor.getLong(0),
+                    folderId = cursor.getLong(1),
+                    workerId = cursor.getLong(2),
+                    dateFolderId = cursor.getLong(3),
+                    date = cursor.getString(4),
+                    epochDay = cursor.getLong(5),
+                    status = com.karyar.app.data.local.entity.AttendanceStatus.valueOf(cursor.getString(6)),
+                    timestamp = cursor.getLong(7),
+                    entryTime = cursor.getString(8),
+                    exitTime = cursor.getString(9),
+                    regularHours = cursor.getDouble(10),
+                    overtimeHours = cursor.getDouble(11),
+                    overtimeRate = cursor.getLong(12),
+                    hourlyWageRate = cursor.getLong(13),
+                    hourlyHours = cursor.getDouble(14),
+                    dailyWage = cursor.getLong(15),
+                    hourlyWage = cursor.getLong(16),
+                    workplaceName = cursor.getString(17),
+                    employerName = cursor.getString(18),
+                    foremanName = cursor.getString(19),
+                    notes = cursor.getString(20),
+                    transitAllowance = cursor.getLong(21),
+                    transitImpact = cursor.getString(22),
+                    foodAllowance = cursor.getLong(23),
+                    foodImpact = cursor.getString(24),
+                    accommodationAllowance = cursor.getLong(25),
+                    accommodationImpact = cursor.getString(26),
+                    medicalAllowance = cursor.getLong(27),
+                    medicalImpact = cursor.getString(28),
+                    hasCustomAllowances = cursor.getInt(29) != 0
+                )
+            )
+        }
+        cursor.close()
+        return list
+    }
+
+    private fun readExpenses(db: androidx.sqlite.db.SupportSQLiteDatabase): List<com.karyar.app.data.local.entity.ExpenseEntity> {
+        val cursor = db.query("""
+            SELECT id, folderId, title, category, scope, impactType, workerId, workerName,
+                   amount, accommodationDays, date, epochDay, timestamp, workplaceName, employerName, foremanName, notes
+            FROM expenses ORDER BY id ASC
+        """.trimIndent())
+        val list = mutableListOf<com.karyar.app.data.local.entity.ExpenseEntity>()
+        while (cursor.moveToNext()) {
+            list.add(
+                com.karyar.app.data.local.entity.ExpenseEntity(
+                    id = cursor.getLong(0),
+                    folderId = cursor.getLong(1),
+                    title = cursor.getString(2),
+                    category = cursor.getString(3),
+                    scope = cursor.getString(4),
+                    impactType = cursor.getString(5),
+                    workerId = if (cursor.isNull(6)) null else cursor.getLong(6),
+                    workerName = if (cursor.isNull(7)) null else cursor.getString(7),
+                    amount = cursor.getLong(8),
+                    accommodationDays = cursor.getInt(9),
+                    date = cursor.getString(10),
+                    epochDay = cursor.getLong(11),
+                    timestamp = cursor.getLong(12),
+                    workplaceName = cursor.getString(13),
+                    employerName = cursor.getString(14),
+                    foremanName = cursor.getString(15),
+                    notes = cursor.getString(16)
+                )
+            )
+        }
+        cursor.close()
+        return list
+    }
+
     @Test
     fun migrate5To6_preservesDistinctWorkersWithSameName() {
         // 1. Create database with schema version 5
@@ -447,5 +617,417 @@ class MigrationTest {
         assertEquals("Expenses count after migration must equal before migration", 3, expCountPost)
 
         db.close()
+    }
+
+    @Test
+    fun migrate6To7_addsCustomAllowanceColumnsAndPreservesExistingData() {
+        var db = helper.createDatabase(TEST_DB + "-6to7", 6)
+
+        db.execSQL("""
+            INSERT INTO `workplace_folders` (`id`, `name`, `foremanName`, `employerName`, `colorTag`, `createdAt`, `notes`)
+            VALUES (1, 'کارگاه نسخه ۶', 'سرکارگر', 'کارفرما', 16086790, '1403/02/01', '')
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `date_folders` (`id`, `folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`, `epochDay`)
+            VALUES (10, 1, '1403/02/01', 'شنبه', 'روز اول', '', 1000, 100)
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `workers` (
+                `id`, `folderId`, `name`, `role`, `phone`, `nationalId`, `baseDailyWage`, `baseHourlyWage`,
+                `isHourlyEnabled`, `hourlyWageRate`, `hourlyHours`, `isOvertimeEnabled`, `overtimeRate`, `overtimeHours`,
+                `isActive`, `notes`, `colorTag`, `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`,
+                `accommodationAllowance`, `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `createdAt`
+            ) VALUES (
+                101, 1, 'رضا محمدی', 'آرماتوربند', '09121112233', '0012345678', 1500000, 0,
+                0, 0, 0.0, 1, 200000, 2.0, 1, 'یادداشت کارگر', 16086790,
+                50000, 'ALLOWANCE', 100000, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1000
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `attendance` (
+                `id`, `folderId`, `workerId`, `dateFolderId`, `date`, `epochDay`, `status`, `timestamp`,
+                `entryTime`, `exitTime`, `regularHours`, `overtimeHours`, `overtimeRate`, `hourlyWageRate`,
+                `hourlyHours`, `dailyWage`, `hourlyWage`, `workplaceName`, `employerName`, `foremanName`, `notes`
+            ) VALUES (
+                501, 1, 101, 10, '1403/02/01', 100, 'HALF_DAY', 5000,
+                '08:00', '12:00', 4.0, 2.0, 200000, 0,
+                0.0, 1500000, 0, 'کارگاه نسخه ۶', 'کارفرما', 'سرکارگر', 'توضیح حضور'
+            )
+        """.trimIndent())
+
+        db.close()
+
+        db = helper.runMigrationsAndValidate(TEST_DB + "-6to7", 7, true, AppDatabase.MIGRATION_6_7)
+
+        val cursor = db.query("""
+            SELECT id, workerId, status, dailyWage, overtimeHours, notes,
+                   transitAllowance, transitImpact, foodAllowance, foodImpact,
+                   accommodationAllowance, accommodationImpact, medicalAllowance, medicalImpact,
+                   hasCustomAllowances
+            FROM attendance WHERE id = 501
+        """.trimIndent())
+
+        org.junit.Assert.assertTrue("Attendance row must exist after 6->7 migration", cursor.moveToFirst())
+        assertEquals(501L, cursor.getLong(0))
+        assertEquals(101L, cursor.getLong(1))
+        assertEquals("HALF_DAY", cursor.getString(2))
+        assertEquals(1500000L, cursor.getLong(3))
+        assertEquals(2.0, cursor.getDouble(4), 0.001)
+        assertEquals("توضیح حضور", cursor.getString(5))
+        assertEquals(50000L, cursor.getLong(6))
+        assertEquals("ALLOWANCE", cursor.getString(7))
+        assertEquals(100000L, cursor.getLong(8))
+        assertEquals("ALLOWANCE", cursor.getString(9))
+        assertEquals(0L, cursor.getLong(10))
+        assertEquals("ALLOWANCE", cursor.getString(11))
+        assertEquals(0L, cursor.getLong(12))
+        assertEquals("ALLOWANCE", cursor.getString(13))
+        assertEquals(1, cursor.getInt(14))
+        cursor.close()
+        db.close()
+    }
+
+    @Test
+    fun migrate6To7_preservesExactFinancialTotalsBeforeAndAfterMigrationForMultipleWorkersWithAbsentDays() {
+        var db = helper.createDatabase(TEST_DB + "-6to7-financial", 6)
+
+        db.execSQL("""
+            INSERT INTO `workplace_folders` (`id`, `name`, `foremanName`, `employerName`, `colorTag`, `createdAt`, `notes`)
+            VALUES (1, 'پروژه تست مالی مایگریشن', 'سرکارگر', 'کارفرما', 16086790, '1403/04/01', '')
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `date_folders` (`id`, `folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`, `epochDay`)
+            VALUES (10, 1, '1403/04/01', 'جمعه', 'روز اول', '', 1000, 200),
+                   (20, 1, '1403/04/02', 'شنبه', 'روز دوم', '', 2000, 201),
+                   (30, 1, '1403/04/03', 'یکشنبه', 'روز سوم', '', 3000, 202)
+        """.trimIndent())
+
+        // Worker 1: روزمزد با مزایا و کسورات ترکیبی (ایاب‌وذهاب افزایشی، خوراک افزایشی، اسکان کاهشی، درمان کاهشی)
+        db.execSQL("""
+            INSERT INTO `workers` (
+                `id`, `folderId`, `name`, `role`, `phone`, `nationalId`, `baseDailyWage`, `baseHourlyWage`,
+                `isHourlyEnabled`, `hourlyWageRate`, `hourlyHours`, `isOvertimeEnabled`, `overtimeRate`, `overtimeHours`,
+                `isActive`, `notes`, `colorTag`, `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`,
+                `accommodationAllowance`, `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `createdAt`
+            ) VALUES (
+                101, 1, 'کارگر اول', 'بنا', '09121111111', '0011111111', 1200000, 0,
+                0, 0, 0.0, 1, 150000, 2.0, 1, '', 16086790,
+                50000, 'ALLOWANCE', 80000, 'ALLOWANCE', 100000, 'DEDUCTION', 30000, 'DEDUCTION', 1000
+            )
+        """.trimIndent())
+
+        // Worker 2: ساعتی با کسورات سنگین و روز غیبت (بدهکار در روز غیبت)
+        db.execSQL("""
+            INSERT INTO `workers` (
+                `id`, `folderId`, `name`, `role`, `phone`, `nationalId`, `baseDailyWage`, `baseHourlyWage`,
+                `isHourlyEnabled`, `hourlyWageRate`, `hourlyHours`, `isOvertimeEnabled`, `overtimeRate`, `overtimeHours`,
+                `isActive`, `notes`, `colorTag`, `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`,
+                `accommodationAllowance`, `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `createdAt`
+            ) VALUES (
+                102, 1, 'کارگر دوم', 'جوشکار', '09122222222', '0022222222', 0, 180000,
+                1, 180000, 6.0, 1, 220000, 1.5, 1, '', 16086790,
+                40000, 'DEDUCTION', 60000, 'ALLOWANCE', 90000, 'DEDUCTION', 20000, 'ALLOWANCE', 1000
+            )
+        """.trimIndent())
+
+        // Worker 3: روزمزد با تمام روز، نصف روز و غیبت
+        db.execSQL("""
+            INSERT INTO `workers` (
+                `id`, `folderId`, `name`, `role`, `phone`, `nationalId`, `baseDailyWage`, `baseHourlyWage`,
+                `isHourlyEnabled`, `hourlyWageRate`, `hourlyHours`, `isOvertimeEnabled`, `overtimeRate`, `overtimeHours`,
+                `isActive`, `notes`, `colorTag`, `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`,
+                `accommodationAllowance`, `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `createdAt`
+            ) VALUES (
+                103, 1, 'کارگر سوم', 'کارگر ساده', '09123333333', '0033333333', 900000, 0,
+                0, 0, 0.0, 0, 0, 0.0, 1, '', 16086790,
+                35000, 'ALLOWANCE', 45000, 'DEDUCTION', 0, 'ALLOWANCE', 15000, 'ALLOWANCE', 1000
+            )
+        """.trimIndent())
+
+        // Attendance rows in v6 (no allowance columns in attendance table yet):
+        // Day 1: Worker 1 FULL_DAY, Worker 2 HOURLY, Worker 3 HALF_DAY
+        // Day 2: Worker 1 ABSENT, Worker 2 ABSENT, Worker 3 FULL_DAY
+        // Day 3: Worker 1 HALF_DAY, Worker 2 HOURLY, Worker 3 ABSENT
+        db.execSQL("""
+            INSERT INTO `attendance` (
+                `id`, `folderId`, `workerId`, `dateFolderId`, `date`, `epochDay`, `status`, `timestamp`,
+                `entryTime`, `exitTime`, `regularHours`, `overtimeHours`, `overtimeRate`, `hourlyWageRate`,
+                `hourlyHours`, `dailyWage`, `hourlyWage`, `workplaceName`, `employerName`, `foremanName`, `notes`
+            ) VALUES
+                (1, 1, 101, 10, '1403/04/01', 200, 'FULL_DAY', 1000, '08:00', '17:00', 8.0, 2.0, 150000, 0, 0.0, 1200000, 0, 'پروژه', '', '', ''),
+                (2, 1, 102, 10, '1403/04/01', 200, 'HOURLY', 1000, '08:00', '14:00', 0.0, 1.5, 220000, 180000, 6.0, 0, 180000, 'پروژه', '', '', ''),
+                (3, 1, 103, 10, '1403/04/01', 200, 'HALF_DAY', 1000, '08:00', '12:00', 4.0, 0.0, 0, 0, 0.0, 450000, 0, 'پروژه', '', '', ''),
+                (4, 1, 101, 20, '1403/04/02', 201, 'ABSENT', 2000, '08:00', '17:00', 0.0, 0.0, 0, 0, 0.0, 0, 0, 'پروژه', '', '', ''),
+                (5, 1, 102, 20, '1403/04/02', 201, 'ABSENT', 2000, '08:00', '17:00', 0.0, 0.0, 0, 0, 0.0, 0, 0, 'پروژه', '', '', ''),
+                (6, 1, 103, 20, '1403/04/02', 201, 'FULL_DAY', 2000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 900000, 0, 'پروژه', '', '', ''),
+                (7, 1, 101, 30, '1403/04/03', 202, 'HALF_DAY', 3000, '08:00', '12:00', 4.0, 1.0, 150000, 0, 0.0, 600000, 0, 'پروژه', '', '', ''),
+                (8, 1, 102, 30, '1403/04/03', 202, 'HOURLY', 3000, '08:00', '13:00', 0.0, 0.0, 220000, 180000, 5.0, 0, 180000, 'پروژه', '', '', ''),
+                (9, 1, 103, 30, '1403/04/03', 202, 'ABSENT', 3000, '08:00', '17:00', 0.0, 0.0, 0, 0, 0.0, 0, 0, 'پروژه', '', '', '')
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `expenses` (
+                `id`, `folderId`, `title`, `category`, `scope`, `impactType`, `workerId`, `workerName`,
+                `amount`, `accommodationDays`, `date`, `epochDay`, `timestamp`, `workplaceName`, `employerName`, `foremanName`, `notes`
+            ) VALUES
+                (1, 1, 'نهار کارگاه', 'FOOD', 'GROUP', 'DEDUCTION', NULL, NULL, 180000, 0, '1403/04/01', 200, 1000, 'پروژه', '', '', ''),
+                (2, 1, 'پاداش کارگر اول', 'OTHER', 'INDIVIDUAL', 'ALLOWANCE', 101, 'کارگر اول', 75000, 0, '1403/04/01', 200, 1000, 'پروژه', '', '', '')
+        """.trimIndent())
+
+        val workersBefore = readWorkers(db)
+        val attendancesBefore = readAttendancesV6(db)
+        val expensesBefore = readExpenses(db)
+
+        val summaryBefore = com.karyar.app.util.WageCalculator.calculateFinancialSummary(
+            workers = workersBefore,
+            attendances = attendancesBefore,
+            expenses = expensesBefore
+        )
+
+        db.close()
+
+        db = helper.runMigrationsAndValidate(TEST_DB + "-6to7-financial", 7, true, AppDatabase.MIGRATION_6_7)
+
+        val workersAfter = readWorkers(db)
+        val attendancesAfter = readAttendancesV7(db)
+        val expensesAfter = readExpenses(db)
+        db.close()
+
+        // Verify all 9 attendance rows now have hasCustomAllowances = true and copied worker allowances
+        assertEquals(9, attendancesAfter.size)
+        for (att in attendancesAfter) {
+            org.junit.Assert.assertTrue("Row ${att.id} must have hasCustomAllowances=true after MIGRATION_6_7", att.hasCustomAllowances)
+            val w = workersAfter.first { it.id == att.workerId }
+            assertEquals(w.transitAllowance, att.transitAllowance)
+            assertEquals(w.transitImpact, att.transitImpact)
+            assertEquals(w.foodAllowance, att.foodAllowance)
+            assertEquals(w.foodImpact, att.foodImpact)
+            assertEquals(w.accommodationAllowance, att.accommodationAllowance)
+            assertEquals(w.accommodationImpact, att.accommodationImpact)
+            assertEquals(w.medicalAllowance, att.medicalAllowance)
+            assertEquals(w.medicalImpact, att.medicalImpact)
+        }
+
+        val summaryAfter = com.karyar.app.util.WageCalculator.calculateFinancialSummary(
+            workers = workersAfter,
+            attendances = attendancesAfter,
+            expenses = expensesAfter
+        )
+
+        // Verify total project financials before and after migration are 100% identical
+        assertEquals(summaryBefore.grandTotalProjectCost, summaryAfter.grandTotalProjectCost)
+        assertEquals(summaryBefore.totalWorkerDebt, summaryAfter.totalWorkerDebt)
+        assertEquals(summaryBefore.totalBaseWagesPaid, summaryAfter.totalBaseWagesPaid)
+        assertEquals(summaryBefore.totalHourlyPaid, summaryAfter.totalHourlyPaid)
+        assertEquals(summaryBefore.totalOvertimePaid, summaryAfter.totalOvertimePaid)
+        assertEquals(summaryBefore.grandTotalExpenses, summaryAfter.grandTotalExpenses)
+
+        // Verify each worker's financial breakdown before and after migration is 100% identical
+        for (perfBefore in summaryBefore.workerPerformances) {
+            val perfAfter = summaryAfter.workerPerformances.first { it.worker.id == perfBefore.worker.id }
+            assertEquals(perfBefore.baseWageTotal, perfAfter.baseWageTotal)
+            assertEquals(perfBefore.hourlyPayTotal, perfAfter.hourlyPayTotal)
+            assertEquals(perfBefore.overtimePayTotal, perfAfter.overtimePayTotal)
+            assertEquals(perfBefore.totalAllowances, perfAfter.totalAllowances)
+            assertEquals(perfBefore.totalDeductions, perfAfter.totalDeductions)
+            assertEquals(perfBefore.transitAllowanceTotal, perfAfter.transitAllowanceTotal)
+            assertEquals(perfBefore.transitDeductionTotal, perfAfter.transitDeductionTotal)
+            assertEquals(perfBefore.foodAllowanceTotal, perfAfter.foodAllowanceTotal)
+            assertEquals(perfBefore.foodDeductionTotal, perfAfter.foodDeductionTotal)
+            assertEquals(perfBefore.accommodationAllowanceTotal, perfAfter.accommodationAllowanceTotal)
+            assertEquals(perfBefore.accommodationDeductionTotal, perfAfter.accommodationDeductionTotal)
+            assertEquals(perfBefore.medicalAllowanceTotal, perfAfter.medicalAllowanceTotal)
+            assertEquals(perfBefore.medicalDeductionTotal, perfAfter.medicalDeductionTotal)
+            assertEquals(perfBefore.groupExpenseShare, perfAfter.groupExpenseShare)
+            assertEquals(perfBefore.netPayout, perfAfter.netPayout)
+            assertEquals(perfBefore.debtAmount, perfAfter.debtAmount)
+        }
+    }
+
+    @Test
+    fun migrate5To7_chainedMigrationPreservesDataAndAppliesV7Schema() {
+        var db = helper.createDatabase(TEST_DB + "-5to7", 5)
+
+        db.execSQL("""
+            INSERT INTO `workplace_folders` (`id`, `name`, `foremanName`, `employerName`, `colorTag`, `createdAt`, `notes`)
+            VALUES (1, 'پروژه زنجیره‌ای ۵ به ۷', 'سرکارگر', 'کارفرما', 16086790, '1403/03/01', '')
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `date_folders` (`id`, `folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`)
+            VALUES (10, 1, '1403/03/01', 'سه‌شنبه', 'روز اول', '', 1000)
+        """.trimIndent())
+
+        insertWorkerV5(db, 201L, 1L, "حسن کریمی", role = "جوشکار")
+        insertWorkerV5(db, 202L, 1L, "حسن کریمی", role = "برقکار")
+
+        insertAttendanceV5(db, 1L, 1L, 201L, "1403/03/01", timestamp = 1000L, notes = "تمام روز", dailyWage = 1200000L)
+        insertAttendanceV5(db, 2L, 1L, 201L, "1403/03/01", timestamp = 2000L, notes = "غیبت", dailyWage = 1200000L)
+        insertAttendanceV5(db, 3L, 1L, 202L, "1403/03/01", timestamp = 1500L, notes = "نصف روز", regularHours = 4.0, dailyWage = 1400000L)
+
+        insertExpenseV5(db, 10L, 1L, "صبحانه کارگاه", "FOOD", "GROUP", 150000L, "1403/03/01", 1000L)
+
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            TEST_DB + "-5to7",
+            7,
+            true,
+            AppDatabase.MIGRATION_5_6,
+            AppDatabase.MIGRATION_6_7
+        )
+
+        val wCursor = db.query("SELECT id, name, role FROM workers ORDER BY id ASC")
+        val workers = mutableListOf<Triple<Long, String, String>>()
+        while (wCursor.moveToNext()) {
+            workers.add(Triple(wCursor.getLong(0), wCursor.getString(1), wCursor.getString(2)))
+        }
+        wCursor.close()
+        assertEquals(2, workers.size)
+        assertEquals(201L, workers[0].first)
+        assertEquals(202L, workers[1].first)
+
+        val attCursor = db.query("""
+            SELECT id, workerId, status, notes, hasCustomAllowances, transitImpact
+            FROM attendance ORDER BY workerId ASC
+        """.trimIndent())
+        val attendances = mutableListOf< Pair<Long, String> >()
+        while (attCursor.moveToNext()) {
+            attendances.add(attCursor.getLong(1) to attCursor.getString(2))
+            assertEquals("", attCursor.getString(3))
+            assertEquals(1, attCursor.getInt(4))
+            assertEquals("ALLOWANCE", attCursor.getString(5))
+        }
+        attCursor.close()
+
+        assertEquals(listOf(201L to "ABSENT", 202L to "HALF_DAY"), attendances)
+        db.close()
+    }
+
+    @Test
+    fun migrate5To6_logsExpectedDuplicateAndOrphanDeletedCounts() {
+        org.robolectric.shadows.ShadowLog.clear()
+        var db = helper.createDatabase(TEST_DB + "-log-counts", 5)
+
+        db.execSQL("""
+            INSERT INTO `workplace_folders` (`id`, `name`, `foremanName`, `employerName`, `colorTag`, `createdAt`, `notes`)
+            VALUES (1, 'پروژه لاگ', '', '', 0, '1403/01/01', '')
+        """.trimIndent())
+        db.execSQL("""
+            INSERT INTO `date_folders` (`id`, `folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`)
+            VALUES (10, 1, '1403/01/01', 'شنبه', '', '', 1000)
+        """.trimIndent())
+
+        insertWorkerV5(db, 1L, 1L, "کارگر معتبر")
+
+        // 1 valid attendance + 2 duplicates for worker 1 on 1403/01/01 (total 2 duplicates deleted)
+        insertAttendanceV5(db, 1L, 1L, 1L, "1403/01/01", timestamp = 1000L)
+        insertAttendanceV5(db, 2L, 1L, 1L, "1403/01/01", timestamp = 2000L)
+        insertAttendanceV5(db, 3L, 1L, 1L, "1403/01/01", timestamp = 3000L)
+
+        // 2 orphan attendance rows: workerId 999 does not exist, folderId 888 does not exist
+        insertAttendanceV5(db, 4L, 1L, 999L, "1403/01/01", timestamp = 1000L)
+        insertAttendanceV5(db, 5L, 888L, 1L, "1403/01/02", timestamp = 1000L)
+
+        db.close()
+
+        db = helper.runMigrationsAndValidate(TEST_DB + "-log-counts", 6, true, AppDatabase.MIGRATION_5_6)
+
+        val remainingCursor = db.query("SELECT id FROM attendance")
+        val remainingIds = mutableListOf<Long>()
+        while (remainingCursor.moveToNext()) {
+            remainingIds.add(remainingCursor.getLong(0))
+        }
+        remainingCursor.close()
+        assertEquals("Only the latest valid attendance row (id=3) should remain", listOf(3L), remainingIds)
+        db.close()
+
+        val logs = org.robolectric.shadows.ShadowLog.getLogsForTag("AppDatabase").map { it.msg }
+        org.junit.Assert.assertTrue(
+            "Expected duplicate deletion count (2) to be logged in AppDatabase logs, actual: $logs",
+            logs.any { it.contains("MIGRATION_5_6: Removed 2 duplicate attendance row(s).") }
+        )
+        org.junit.Assert.assertTrue(
+            "Expected orphan deletion count (2) to be logged in AppDatabase logs, actual: $logs",
+            logs.any { it.contains("MIGRATION_5_6: Removed 2 orphan row(s) violating foreign keys (attendance: 2).") }
+        )
+    }
+
+    private fun resetDatabaseInstance() {
+        val instanceField = AppDatabase::class.java.getDeclaredField("INSTANCE")
+        instanceField.isAccessible = true
+        (instanceField.get(null) as? AppDatabase)?.close()
+        instanceField.set(null, null)
+    }
+
+    @Test
+    fun getDatabase_createsBackupWhenUserVersionIsLowerAndKeepsOnlyLast3Backups() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val backupDir = java.io.File(context.filesDir, "db_backups")
+        backupDir.deleteRecursively()
+
+        val dbFile = context.getDatabasePath("worker_management_db")
+        dbFile.parentFile?.mkdirs()
+
+        try {
+            // Simulate 4 upgrades from older versions (v3, v4, v5, v6) before calling getDatabase
+            for (oldVersion in listOf(3, 4, 5, 6)) {
+                resetDatabaseInstance()
+                if (dbFile.exists()) dbFile.delete()
+                java.io.File(dbFile.path + "-wal").delete()
+                java.io.File(dbFile.path + "-shm").delete()
+
+                val sqliteDb = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(dbFile, null)
+                sqliteDb.execSQL("PRAGMA user_version = $oldVersion")
+                sqliteDb.close()
+
+                // Trigger pre-migration backup via getDatabase
+                val roomDb = AppDatabase.getDatabase(context)
+                roomDb.close()
+                resetDatabaseInstance()
+            }
+
+            val backups = backupDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
+            assertEquals("Only the last 3 backups must be kept", 3, backups.size)
+            org.junit.Assert.assertTrue("Oldest backup (v3) should be pruned", backups.none { it.name.contains("_v3_") })
+            org.junit.Assert.assertTrue("Backup for v4 should exist", backups.any { it.name.contains("_v4_") })
+            org.junit.Assert.assertTrue("Backup for v5 should exist", backups.any { it.name.contains("_v5_") })
+            org.junit.Assert.assertTrue("Backup for v6 should exist", backups.any { it.name.contains("_v6_") })
+
+            // Verify that when user_version == CURRENT_DB_VERSION (7), no additional backup is created
+            if (dbFile.exists()) dbFile.delete()
+            val currentSqliteDb = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(dbFile, null)
+            currentSqliteDb.execSQL("PRAGMA user_version = ${AppDatabase.CURRENT_DB_VERSION}")
+            currentSqliteDb.close()
+
+            val beforeNames = backupDir.listFiles()?.map { it.name }?.sorted() ?: emptyList()
+            val roomDbCurrent = AppDatabase.getDatabase(context)
+            roomDbCurrent.close()
+            resetDatabaseInstance()
+            val afterNames = backupDir.listFiles()?.map { it.name }?.sorted() ?: emptyList()
+            assertEquals("No new backup should be created when DB is already at current version", beforeNames, afterNames)
+
+            // Verify that if backup fails (e.g. db_backups is a file blocking directory creation), getDatabase does not crash
+            backupDir.deleteRecursively()
+            backupDir.writeText("not-a-directory")
+            if (dbFile.exists()) dbFile.delete()
+            val v6SqliteDb = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(dbFile, null)
+            v6SqliteDb.execSQL("PRAGMA user_version = 6")
+            v6SqliteDb.close()
+
+            val safeDb = AppDatabase.getDatabase(context)
+            org.junit.Assert.assertNotNull("getDatabase must succeed even if backup fails", safeDb)
+            safeDb.close()
+        } finally {
+            resetDatabaseInstance()
+            backupDir.deleteRecursively()
+            if (dbFile.exists()) dbFile.delete()
+            java.io.File(dbFile.path + "-wal").delete()
+            java.io.File(dbFile.path + "-shm").delete()
+        }
     }
 }

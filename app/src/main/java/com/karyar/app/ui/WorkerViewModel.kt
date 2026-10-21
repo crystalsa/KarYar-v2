@@ -15,6 +15,7 @@ import com.karyar.app.data.local.entity.WorkplaceFolderEntity
 import com.karyar.app.data.repository.WorkerRepository
 import com.karyar.app.domain.model.DailyBookkeeping
 import com.karyar.app.domain.model.DashboardAnalytics
+import com.karyar.app.domain.model.DeletionImpact
 import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.util.FinancialSummary
 import com.karyar.app.util.JalaliCalendar
@@ -217,7 +218,8 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
             totalIndividualExpenses = summary.totalIndividualExpenses,
             totalGroupExpenses = summary.totalGroupExpenses,
             grandTotalExpenses = summary.grandTotalExpenses,
-            grandTotalProjectCost = summary.grandTotalProjectCost
+            grandTotalProjectCost = summary.grandTotalProjectCost,
+            totalWorkerDebt = summary.totalWorkerDebt
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardAnalytics())
 
@@ -285,6 +287,15 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
+
+    suspend fun getFolderDeletionImpact(folderId: Long): DeletionImpact =
+        repository.getFolderDeletionImpact(folderId)
+
+    suspend fun getDateFolderDeletionImpact(dateFolder: DateFolderEntity): DeletionImpact =
+        repository.getDateFolderDeletionImpact(dateFolder)
+
+    suspend fun getWorkerDeletionImpact(workerId: Long): DeletionImpact =
+        repository.getWorkerDeletionImpact(workerId)
 
     // Date/Day Folder Actions
     fun addDateFolder(date: String, dayOfWeek: String, title: String, notes: String = "") {
@@ -427,9 +438,22 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun updateWorker(worker: WorkerEntity) {
+    fun updateWorker(
+        worker: WorkerEntity,
+        dayAttendance: AttendanceEntity? = null
+    ) {
         launchDb("updateWorker") {
-            repository.updateWorker(worker)
+            repository.updateWorker(
+                worker = worker,
+                dayAttendance = dayAttendance
+            )
+        }
+    }
+
+    fun deactivateWorker(worker: WorkerEntity) {
+        launchDb("deactivateWorker") {
+            repository.deactivateWorker(worker)
+            showSnackbarMessage("«${worker.name}» غیرفعال شد و سوابق مالی او محفوظ ماند")
         }
     }
 
@@ -456,10 +480,24 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         launchDb("updateAttendance") { repository.insertAttendance(attendance) }
     }
 
+    private fun AttendanceEntity.withPreservedAllowancesFrom(existing: AttendanceEntity): AttendanceEntity {
+        if (!existing.hasCustomAllowances) return this
+        return this.copy(
+            transitAllowance = existing.transitAllowance,
+            transitImpact = existing.transitImpact,
+            foodAllowance = existing.foodAllowance,
+            foodImpact = existing.foodImpact,
+            accommodationAllowance = existing.accommodationAllowance,
+            accommodationImpact = existing.accommodationImpact,
+            medicalAllowance = existing.medicalAllowance,
+            medicalImpact = existing.medicalImpact,
+            hasCustomAllowances = true
+        )
+    }
+
     fun setAttendanceStatus(worker: WorkerEntity, dateStr: String, status: String) {
         val folder = currentFolder.value ?: return
         val epochDay = JalaliCalendar.toEpochDay(dateStr)
-        val hourlyRate = WageCalculator.defaultHourlyRate(worker)
         val activeDf = selectedDateFolder.value
         val dfId = if (activeDf?.date == dateStr) activeDf.id else 0L
 
@@ -484,6 +522,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
                                     employerName = folder.employerName,
                                     notes = existing.notes
                                 ).copy(id = existing.id, epochDay = epochDay)
+                                    .withPreservedAllowancesFrom(existing)
                             )
                         }
                     }
@@ -504,6 +543,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
                                     employerName = folder.employerName,
                                     notes = existing.notes
                                 ).copy(id = existing.id, epochDay = epochDay)
+                                    .withPreservedAllowancesFrom(existing)
                             )
                         }
                     }
@@ -523,6 +563,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
                                     employerName = folder.employerName,
                                     notes = existing.notes
                                 ).copy(id = existing.id, epochDay = epochDay)
+                                    .withPreservedAllowancesFrom(existing)
                             )
                         } else {
                             repository.updateAttendance(
@@ -537,6 +578,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
                                     employerName = folder.employerName,
                                     notes = existing.notes
                                 ).copy(id = existing.id, epochDay = epochDay)
+                                    .withPreservedAllowancesFrom(existing)
                             )
                         }
                     }
@@ -556,6 +598,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
                                     employerName = folder.employerName,
                                     notes = existing.notes
                                 ).copy(id = existing.id, epochDay = epochDay)
+                                    .withPreservedAllowancesFrom(existing)
                             )
                         } else {
                             repository.updateAttendance(
@@ -570,6 +613,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
                                     employerName = folder.employerName,
                                     notes = existing.notes
                                 ).copy(id = existing.id, epochDay = epochDay)
+                                    .withPreservedAllowancesFrom(existing)
                             )
                         }
                     }

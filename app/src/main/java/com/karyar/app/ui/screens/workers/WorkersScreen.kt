@@ -508,8 +508,24 @@ fun WorkersScreen(
     }
 
     if (deletingDateFolder != null) {
+        val dfToDelete = deletingDateFolder!!
+        val initialDayImpact = remember(dfToDelete, allWorkers, attendanceList, expenses) {
+            val dayAtts = attendanceList.filter { it.dateFolderId == dfToDelete.id || it.date == dfToDelete.date }
+            val dayExps = expenses.filter { it.date == dfToDelete.date }
+            com.karyar.app.util.WageCalculator.calculateDateFolderDeletionImpact(
+                dateStr = dfToDelete.date,
+                workers = allWorkers,
+                dayAttendances = dayAtts,
+                dayExpenses = dayExps
+            )
+        }
+        var dayDeletionImpact by remember(dfToDelete.id) { mutableStateOf(initialDayImpact) }
+        androidx.compose.runtime.LaunchedEffect(dfToDelete.id) {
+            dayDeletionImpact = viewModel.getDateFolderDeletionImpact(dfToDelete)
+        }
         DeleteDayConfirmDialog(
-            dateFolder = deletingDateFolder!!,
+            dateFolder = dfToDelete,
+            deletionImpact = dayDeletionImpact,
             onDismiss = { deletingDateFolder = null },
             onConfirm = {
                 deletingDateFolder?.let { viewModel.deleteDateFolder(it) }
@@ -523,18 +539,18 @@ fun WorkersScreen(
         val currentAtt = if (targetDate.isNotBlank()) {
             attendanceList.firstOrNull { it.workerId == worker.id && it.date == targetDate }
         } else null
+        var pendingDayAttendance: AttendanceEntity? = null
         AddEditWorkerDialog(
             initialWorker = worker,
             initialAttendance = currentAtt,
             initialDate = targetDate,
             initialDayOfWeek = targetDayOfWeek,
             onDismiss = { editingWorker = null },
-            onConfirm = { updatedWorker ->
-                viewModel.updateWorker(updatedWorker)
-                editingWorker = null
-            },
             onConfirmAttendance = { updatedAtt ->
-                viewModel.updateAttendance(updatedAtt)
+                pendingDayAttendance = updatedAtt
+            },
+            onConfirm = { updatedWorker ->
+                viewModel.updateWorker(updatedWorker, dayAttendance = pendingDayAttendance)
                 editingWorker = null
             }
         )
@@ -568,21 +584,34 @@ fun WorkersScreen(
 
     if (deletingWorker != null) {
         val worker = deletingWorker!!
+        val initialWorkerImpact = remember(worker, attendanceList, expenses) {
+            val workerAtts = attendanceList.filter { it.workerId == worker.id }
+            val workerExps = expenses.filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) && it.workerId == worker.id }
+            com.karyar.app.util.WageCalculator.calculateWorkerDeletionImpact(
+                worker = worker,
+                workerAttendances = workerAtts,
+                workerIndividualExpenses = workerExps
+            )
+        }
+        var workerDeletionImpact by remember(worker.id) { mutableStateOf(initialWorkerImpact) }
+        androidx.compose.runtime.LaunchedEffect(worker.id) {
+            workerDeletionImpact = viewModel.getWorkerDeletionImpact(worker.id)
+        }
         val dayInfoText = if (targetDayFolder != null && targetDate.isNotBlank())
             "${targetDayFolder.dayOfWeek} ${Formatters.toPersianDigits(targetDate)}"
         else null
+        val effectiveRemoveDate = targetDate.ifBlank { JalaliCalendar.todayString() }
         DeleteWorkerConfirmDialog(
             workerName = worker.name,
             dayInfo = dayInfoText,
+            deletionImpact = workerDeletionImpact,
             onDismiss = { deletingWorker = null },
-            onRemoveFromDay = if (targetDayFolder != null && targetDate.isNotBlank()) {
-                {
-                    viewModel.removeWorkerFromDate(worker.id, targetDate)
-                    deletingWorker = null
-                }
-            } else null,
-            onDeletePermanently = {
-                viewModel.deleteWorker(worker)
+            onRemoveFromDay = {
+                viewModel.removeWorkerFromDate(worker.id, effectiveRemoveDate)
+                deletingWorker = null
+            },
+            onDeactivateWorker = {
+                viewModel.deactivateWorker(worker)
                 deletingWorker = null
             }
         )

@@ -219,14 +219,35 @@ fun FoldersScreen(
 
     // Delete Confirmation Dialog
     if (deletingFolder != null) {
+        val targetFolder = deletingFolder!!
+        var folderDeletionImpact by remember(targetFolder.id) {
+            mutableStateOf(com.karyar.app.domain.model.DeletionImpact())
+        }
+        androidx.compose.runtime.LaunchedEffect(targetFolder.id) {
+            folderDeletionImpact = viewModel.getFolderDeletionImpact(targetFolder.id)
+        }
+        val daysCountPersian = com.karyar.app.util.Formatters.toPersianDigits(folderDeletionImpact.attendanceDaysCount)
+        val settlementStr = folderDeletionImpact.formatSettlementText()
+
         AlertDialog(
             onDismissRequest = { deletingFolder = null },
             title = { Text("حذف پوشه محل کار", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
             text = {
-                Text(
-                    "آیا از حذف پوشه «${deletingFolder?.name}» و تمام کارگران، ترددها و فاکتورهای حساب و کتاب این پوشه اطمینان دارید؟ این عملیات غیرقابل بازگشت است.",
-                    fontSize = 12.5.sp
-                )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "آیا از حذف پوشه «${targetFolder.name}» اطمینان دارید؟",
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "با حذف این پوشه، $daysCountPersian روز حضور و مبلغ $settlementStr از سوابق پاک می‌شود. این عملیات غیرقابل بازگشت است.",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RoseAccent,
+                        lineHeight = 18.sp
+                    )
+                }
             },
             confirmButton = {
                 LoadingButton(
@@ -238,7 +259,8 @@ fun FoldersScreen(
                     },
                     containerColor = RoseAccent,
                     height = 38.dp,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    testTag = "confirm_delete_folder_button"
                 )
             },
             dismissButton = {

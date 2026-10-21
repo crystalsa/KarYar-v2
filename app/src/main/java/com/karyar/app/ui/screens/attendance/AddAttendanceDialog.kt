@@ -55,6 +55,7 @@ import com.karyar.app.data.local.entity.AttendanceStatus
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
 import com.karyar.app.ui.components.HairlineCard
+import com.karyar.app.ui.screens.workers.components.WorkerDailyWageSection
 import com.karyar.app.ui.theme.AmberAccent
 import com.karyar.app.ui.theme.CyanAccent
 import com.karyar.app.ui.theme.EmeraldAccent
@@ -79,6 +80,10 @@ fun AddAttendanceDialog(
     var regularHours by remember { mutableStateOf("") }
     var hasOvertime by remember { mutableStateOf(false) }
     var overtimeHours by remember { mutableStateOf("") }
+
+    var isDailyWageEnabled by remember {
+        mutableStateOf(selectedWorker?.isHourlyEnabled != true && (selectedWorker?.baseDailyWage ?: 0L) > 0L)
+    }
 
     var isHourly by remember {
         mutableStateOf(selectedWorker?.isHourlyEnabled == true)
@@ -109,6 +114,7 @@ fun AddAttendanceDialog(
     fun onWorkerChanged(worker: WorkerEntity) {
         selectedWorker = worker
         isHourly = worker.isHourlyEnabled
+        isDailyWageEnabled = !worker.isHourlyEnabled && worker.baseDailyWage > 0L
         if (worker.isHourlyEnabled) {
             dailyWage = ""
             val r = if (worker.hourlyWageRate > 0L) worker.hourlyWageRate else worker.baseHourlyWage
@@ -284,27 +290,12 @@ fun AddAttendanceDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // --- Base Daily Wage (دستمزد روزانه ثابت پیش‌فرض) ---
-                OutlinedTextField(
-                    value = dailyWage,
-                    onValueChange = { dailyWage = Formatters.formatPriceInput(it) },
-                    enabled = !isHourly,
-                    label = {
-                        Text(if (isHourly) "دستمزد روزانه (خاموش شده)" else "دستمزد روزانه ثابت (تومان)")
-                    },
-                    placeholder = {
-                        Text(if (isHourly) "خاموش (دستمزد ساعتی فعال است)" else "مبلغ به تومان")
-                    },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        disabledContainerColor = Slate100.copy(alpha = 0.6f),
-                        disabledTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                        disabledBorderColor = Slate200.copy(alpha = 0.7f),
-                        disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                    )
+                // --- Base Daily Wage (دستمزد روزانه ثابت با تیک‌باکس) ---
+                WorkerDailyWageSection(
+                    isDailyWageEnabled = isDailyWageEnabled,
+                    onDailyWageEnabledChange = { isDailyWageEnabled = it },
+                    baseDailyWage = dailyWage,
+                    onBaseDailyWageChange = { dailyWage = it }
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -344,7 +335,7 @@ fun AddAttendanceDialog(
                                     color = if (isHourly) CyanAccent else MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            if (isHourly && attHourlyTotal > 0) {
+                            if (isHourly && (hourlyWage.isNotBlank() || regularHours.isNotBlank())) {
                                 Text(
                                     text = "جمع: ${Formatters.formatCurrency(attHourlyTotal)}",
                                     fontSize = 11.sp,
@@ -367,7 +358,7 @@ fun AddAttendanceDialog(
                                         value = hourlyWage,
                                         onValueChange = { hourlyWage = Formatters.formatPriceInput(it) },
                                         label = { Text("مبلغ هر ساعت (تومان)", fontSize = 11.sp) },
-                                        placeholder = { Text("۱۵۰,۰۰۰", fontSize = 11.sp) },
+                                        placeholder = { Text("۱۵۰,۰۰۰ یا ۰", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1.2f),
                                         singleLine = true
@@ -379,7 +370,7 @@ fun AddAttendanceDialog(
                                             regularHours = Formatters.toEnglishDigits(it).filter { ch -> ch.isDigit() || ch == '.' }
                                         },
                                         label = { Text("تعداد ساعت کار", fontSize = 11.sp) },
-                                        placeholder = { Text("۸", fontSize = 11.sp) },
+                                        placeholder = { Text("۸ یا ۰", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         modifier = Modifier.weight(0.8f),
                                         singleLine = true
@@ -446,22 +437,33 @@ fun AddAttendanceDialog(
                         val worker = selectedWorker
                         if (worker != null) {
                             val parsedRegHours = Formatters.parseDouble(regularHours)
-                            val finalRegHours = if (parsedRegHours > 0) parsedRegHours else 8.0
+                            val finalRegHours = if (regularHours.isNotBlank()) parsedRegHours else if (isHourly) 0.0 else 8.0
+                            val parsedHourlyRateVal = if (isHourly) Formatters.parsePrice(hourlyWage) else 0L
 
                             val entity = AttendanceEntity(
                                 folderId = folder?.id ?: 1L,
                                 workerId = worker.id,
                                 date = date.trim(),
                                 epochDay = JalaliCalendar.toEpochDay(date.trim()),
-                                status = if (isHourly) AttendanceStatus.HOURLY else if (finalRegHours == 4.0) AttendanceStatus.HALF_DAY else AttendanceStatus.FULL_DAY,
+                                status = if (isHourly && !isDailyWageEnabled) AttendanceStatus.HOURLY else if (finalRegHours == 4.0) AttendanceStatus.HALF_DAY else AttendanceStatus.FULL_DAY,
                                 entryTime = entryTime.trim(),
                                 exitTime = exitTime.trim(),
-                                regularHours = finalRegHours,
+                                regularHours = if (isHourly && !isDailyWageEnabled) 0.0 else finalRegHours,
                                 overtimeHours = if (hasOvertime) Formatters.parseDouble(overtimeHours) else 0.0,
-                                dailyWage = if (!isHourly) (if (dailyWage.isNotBlank()) Formatters.parsePrice(dailyWage) else worker.baseDailyWage) else 0L,
-                                hourlyWage = if (isHourly) (if (hourlyWage.isNotBlank()) Formatters.parsePrice(hourlyWage) else (if (worker.hourlyWageRate > 0) worker.hourlyWageRate else worker.baseHourlyWage)) else 0L,
-                                hourlyWageRate = if (isHourly) (if (hourlyWage.isNotBlank()) Formatters.parsePrice(hourlyWage) else (if (worker.hourlyWageRate > 0) worker.hourlyWageRate else worker.baseHourlyWage)) else 0L,
+                                overtimeRate = if (hasOvertime) worker.overtimeRate else 0L,
+                                dailyWage = if (isDailyWageEnabled) Formatters.parsePrice(dailyWage) else 0L,
+                                hourlyWage = parsedHourlyRateVal,
+                                hourlyWageRate = parsedHourlyRateVal,
                                 hourlyHours = if (isHourly) finalRegHours else 0.0,
+                                transitAllowance = worker.transitAllowance,
+                                transitImpact = worker.transitImpact,
+                                foodAllowance = worker.foodAllowance,
+                                foodImpact = worker.foodImpact,
+                                accommodationAllowance = worker.accommodationAllowance,
+                                accommodationImpact = worker.accommodationImpact,
+                                medicalAllowance = worker.medicalAllowance,
+                                medicalImpact = worker.medicalImpact,
+                                hasCustomAllowances = true,
                                 workplaceName = workplaceName.trim(),
                                 employerName = employerName.trim(),
                                 foremanName = foremanName.trim(),

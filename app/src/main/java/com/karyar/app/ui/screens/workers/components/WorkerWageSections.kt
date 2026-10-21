@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -30,6 +31,76 @@ import com.karyar.app.ui.theme.AmberAccent
 import com.karyar.app.ui.theme.CyanAccent
 import com.karyar.app.ui.theme.Slate100
 import com.karyar.app.util.Formatters
+
+@Composable
+fun WorkerDailyWageSection(
+    isDailyWageEnabled: Boolean,
+    onDailyWageEnabledChange: (Boolean) -> Unit,
+    baseDailyWage: String,
+    onBaseDailyWageChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val parsedDailyWageVal = Formatters.parsePrice(baseDailyWage)
+
+    HairlineCard(
+        modifier = modifier.fillMaxWidth(),
+        backgroundColor = if (isDailyWageEnabled) AmberAccent.copy(alpha = 0.08f) else Slate100,
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onDailyWageEnabledChange(!isDailyWageEnabled) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = isDailyWageEnabled,
+                        onCheckedChange = onDailyWageEnabledChange,
+                        colors = CheckboxDefaults.colors(checkedColor = AmberAccent),
+                        modifier = Modifier
+                            .size(28.dp)
+                            .testTag("daily_wage_checkbox")
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "دستمزد روزانه ثابت",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = if (isDailyWageEnabled) AmberAccent else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                if (isDailyWageEnabled && baseDailyWage.isNotBlank()) {
+                    Text(
+                        text = Formatters.formatCurrency(parsedDailyWageVal),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AmberAccent
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = isDailyWageEnabled) {
+                Column {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = baseDailyWage,
+                        onValueChange = { onBaseDailyWageChange(Formatters.formatPriceInput(it)) },
+                        label = { Text("دستمزد روزانه ثابت (تومان)", fontSize = 11.sp) },
+                        placeholder = { Text("مثلاً ۱,۲۰۰,۰۰۰ یا ۰", fontSize = 11.sp) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("daily_wage_input"),
+                        singleLine = true
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun WorkerHourlyWageSection(
@@ -65,7 +136,9 @@ fun WorkerHourlyWageSection(
                         checked = isHourlyEnabled,
                         onCheckedChange = onHourlyEnabledChange,
                         colors = CheckboxDefaults.colors(checkedColor = CyanAccent),
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier
+                            .size(28.dp)
+                            .testTag("hourly_wage_checkbox")
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
@@ -75,7 +148,7 @@ fun WorkerHourlyWageSection(
                         color = if (isHourlyEnabled) CyanAccent else MaterialTheme.colorScheme.onSurface
                     )
                 }
-                if (isHourlyEnabled && hourlyTotal > 0) {
+                if (isHourlyEnabled && (hourlyWageRate.isNotBlank() || hourlyHours.isNotBlank())) {
                     Text(
                         text = "جمع: ${Formatters.formatCurrency(hourlyTotal)}",
                         fontSize = 11.sp,
@@ -96,9 +169,11 @@ fun WorkerHourlyWageSection(
                             value = hourlyWageRate,
                             onValueChange = { onHourlyWageRateChange(Formatters.formatPriceInput(it)) },
                             label = { Text("مبلغ هر ساعت (تومان)", fontSize = 11.sp) },
-                            placeholder = { Text("۱۵۰,۰۰۰", fontSize = 11.sp) },
+                            placeholder = { Text("۱۵۰,۰۰۰ یا ۰", fontSize = 11.sp) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1.2f),
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .testTag("hourly_rate_input"),
                             singleLine = true
                         )
                         OutlinedTextField(
@@ -111,9 +186,11 @@ fun WorkerHourlyWageSection(
                                 onHourlyHoursChange(normalized.filter { ch -> ch.isDigit() || ch == '.' })
                             },
                             label = { Text("تعداد ساعت کار", fontSize = 11.sp) },
-                            placeholder = { Text("۸ یا ۸.۵", fontSize = 11.sp) },
+                            placeholder = { Text("۸ یا ۰", fontSize = 11.sp) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(0.8f),
+                            modifier = Modifier
+                                .weight(0.8f)
+                                .testTag("hourly_hours_input"),
                             singleLine = true
                         )
                     }
@@ -141,12 +218,14 @@ fun WorkerOvertimeSection(
 
     HairlineCard(
         modifier = modifier.fillMaxWidth(),
-        backgroundColor = Slate100,
+        backgroundColor = if (isOvertimeEnabled) AmberAccent.copy(alpha = 0.08f) else Slate100,
         shape = RoundedCornerShape(10.dp)
     ) {
         Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOvertimeEnabledChange(!isOvertimeEnabled) },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -155,17 +234,19 @@ fun WorkerOvertimeSection(
                         checked = isOvertimeEnabled,
                         onCheckedChange = onOvertimeEnabledChange,
                         colors = CheckboxDefaults.colors(checkedColor = AmberAccent),
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier
+                            .size(28.dp)
+                            .testTag("overtime_checkbox")
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "اضافه کاری",
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.5.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = if (isOvertimeEnabled) AmberAccent else MaterialTheme.colorScheme.onSurface
                     )
                 }
-                if (overtimeTotal > 0) {
+                if (isOvertimeEnabled && (overtimeRate.isNotBlank() || overtimeHours.isNotBlank())) {
                     Text(
                         text = "جمع: ${Formatters.formatCurrency(overtimeTotal)}",
                         fontSize = 11.sp,
@@ -175,36 +256,42 @@ fun WorkerOvertimeSection(
                 }
             }
 
-            if (isOvertimeEnabled) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = overtimeRate,
-                        onValueChange = { onOvertimeRateChange(Formatters.formatPriceInput(it)) },
-                        label = { Text("نرخ اضافه کار (تومان)", fontSize = 11.sp) },
-                        placeholder = { Text("نرخ هر ساعت", fontSize = 11.sp) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1.2f),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = overtimeHours,
-                        onValueChange = { input ->
-                            val normalized = Formatters.toEnglishDigits(input)
-                                .replace('/', '.')
-                                .replace('٫', '.')
-                                .replace(',', '.')
-                            onOvertimeHoursChange(normalized.filter { ch -> ch.isDigit() || ch == '.' })
-                        },
-                        label = { Text("ساعت اضافه", fontSize = 11.sp) },
-                        placeholder = { Text("۲ یا ۰.۵", fontSize = 11.sp) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(0.8f),
-                        singleLine = true
-                    )
+            AnimatedVisibility(visible = isOvertimeEnabled) {
+                Column {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = overtimeRate,
+                            onValueChange = { onOvertimeRateChange(Formatters.formatPriceInput(it)) },
+                            label = { Text("نرخ اضافه کار (تومان)", fontSize = 11.sp) },
+                            placeholder = { Text("نرخ هر ساعت یا ۰", fontSize = 11.sp) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .testTag("overtime_rate_input"),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = overtimeHours,
+                            onValueChange = { input ->
+                                val normalized = Formatters.toEnglishDigits(input)
+                                    .replace('/', '.')
+                                    .replace('٫', '.')
+                                    .replace(',', '.')
+                                onOvertimeHoursChange(normalized.filter { ch -> ch.isDigit() || ch == '.' })
+                            },
+                            label = { Text("ساعت اضافه", fontSize = 11.sp) },
+                            placeholder = { Text("۲ یا ۰", fontSize = 11.sp) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier
+                                .weight(0.8f)
+                                .testTag("overtime_hours_input"),
+                            singleLine = true
+                        )
+                    }
                 }
             }
         }

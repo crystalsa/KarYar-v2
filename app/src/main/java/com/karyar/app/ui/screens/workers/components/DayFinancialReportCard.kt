@@ -163,17 +163,17 @@ fun DayFinancialReportCard(
         }
     }
 
-    val totalDayPayroll = dayWorkers.sumOf { worker ->
-        val att = attendanceList.firstOrNull { a -> a.workerId == worker.id && a.date == targetDayFolder.date }
-        WageCalculator.calculateDayPayout(worker, att)
-    }
+    val dailyBookkeeping = WageCalculator.calculateDailyBookkeeping(
+        dateStr = targetDayFolder.date,
+        workers = allWorkers,
+        attendances = attendanceList,
+        expenses = expenses
+    )
 
-    val dayGroupExpenses = expenses
-        .filter { it.date == targetDayFolder.date && it.scope.equals("GROUP", ignoreCase = true) }
-        .sumOf { it.amount }
+    val dayGroupExpenses = dailyBookkeeping.groupExpenses
 
-    // Direct deduction of workshop group expenses from daily final cost
-    val totalDayNetCost = (totalDayPayroll - dayGroupExpenses).coerceAtLeast(0L)
+    // استفاده مستقیم از مقدار خام grandDailyCost بدون clamp روزانه
+    val totalDayNetCost = dailyBookkeeping.grandDailyCost
 
     Surface(
         modifier = modifier
@@ -259,10 +259,10 @@ fun DayFinancialReportCard(
                         }
 
                         Text(
-                            text = Formatters.formatCurrency(totalDayNetCost),
+                            text = if (totalDayNetCost < 0L) "بدهکار: ${Formatters.formatCurrency(-totalDayNetCost)}" else Formatters.formatCurrency(totalDayNetCost),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
-                            color = EmeraldAccent
+                            color = if (totalDayNetCost < 0L) RoseAccent else EmeraldAccent
                         )
                     }
                 }

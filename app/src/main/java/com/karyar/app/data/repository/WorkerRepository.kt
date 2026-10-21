@@ -13,6 +13,7 @@ import com.karyar.app.data.local.entity.DateFolderEntity
 import com.karyar.app.data.local.entity.ExpenseEntity
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
+import com.karyar.app.domain.model.DeletionImpact
 import com.karyar.app.util.JalaliCalendar
 import com.karyar.app.util.WageCalculator
 import kotlinx.coroutines.flow.Flow
@@ -49,13 +50,79 @@ class WorkerRepository(
     suspend fun updateDateFolder(dateFolder: DateFolderEntity) = dateFolderDao.updateDateFolder(dateFolder)
     suspend fun getDateFolderByDate(folderId: Long, date: String): DateFolderEntity? = dateFolderDao.getDateFolderByDate(folderId, date)
     suspend fun deleteDateFolder(dateFolder: DateFolderEntity) = database.withTransaction {
-        attendanceDao.deleteAttendanceByDateFolder(dateFolder.id)
+        attendanceDao.deleteAttendanceForDateFolder(
+            folderId = dateFolder.folderId,
+            dateFolderId = dateFolder.id,
+            date = dateFolder.date
+        )
         dateFolderDao.deleteDateFolder(dateFolder)
     }
 
     suspend fun deleteFolder(folder: WorkplaceFolderEntity) = database.withTransaction {
         folderDao.deleteFolder(folder)
     }
+
+    /**
+     * قبل از حذف کارگر، تعداد روزهای حضور و مبلغ خالص تسویه‌ای را که از بین می‌رود برمی‌گرداند.
+     */
+    suspend fun getWorkerDeletionImpact(workerId: Long): DeletionImpact {
+        val worker = workerDao.getWorkerByIdSync(workerId) ?: return DeletionImpact()
+        val workerAttendances = attendanceDao.getAttendanceForWorkerSync(workerId)
+        val workerExpenses = expenseDao.getExpensesForWorkerSync(worker.folderId, workerId)
+            .filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) }
+        return WageCalculator.calculateWorkerDeletionImpact(
+            worker = worker,
+            workerAttendances = workerAttendances,
+            workerIndividualExpenses = workerExpenses
+        )
+    }
+
+    suspend fun getWorkerDeletionImpact(worker: WorkerEntity): DeletionImpact =
+        getWorkerDeletionImpact(worker.id)
+
+    /**
+     * قبل از حذف روز کاری، تعداد روزهای حضور و مبلغ خالص تسویه‌ای را که از بین می‌رود برمی‌گرداند.
+     */
+    suspend fun getDateFolderDeletionImpact(dateFolderId: Long): DeletionImpact {
+        val dateFolder = dateFolderDao.getDateFolderById(dateFolderId) ?: return DeletionImpact()
+        return getDateFolderDeletionImpact(dateFolder)
+    }
+
+    suspend fun getDateFolderDeletionImpact(dateFolder: DateFolderEntity): DeletionImpact {
+        val workers = workerDao.getWorkersByFolderSync(dateFolder.folderId)
+        val dayAttendances = attendanceDao.getAttendanceForDateFolderSync(
+            folderId = dateFolder.folderId,
+            dateFolderId = dateFolder.id,
+            date = dateFolder.date
+        )
+        val dayExpenses = expenseDao.getExpensesForDateInFolderSync(
+            folderId = dateFolder.folderId,
+            date = dateFolder.date
+        )
+        return WageCalculator.calculateDateFolderDeletionImpact(
+            dateStr = dateFolder.date,
+            workers = workers,
+            dayAttendances = dayAttendances,
+            dayExpenses = dayExpenses
+        )
+    }
+
+    /**
+     * قبل از حذف پوشه کارگاه، تعداد روزهای حضور و مبلغ خالص تسویه‌ای را که از بین می‌رود برمی‌گرداند.
+     */
+    suspend fun getFolderDeletionImpact(folderId: Long): DeletionImpact {
+        val workers = workerDao.getWorkersByFolderSync(folderId)
+        val attendances = attendanceDao.getAttendanceByFolderSync(folderId)
+        val expenses = expenseDao.getExpensesByFolderSync(folderId)
+        return WageCalculator.calculateFolderDeletionImpact(
+            workers = workers,
+            attendances = attendances,
+            expenses = expenses
+        )
+    }
+
+    suspend fun getFolderDeletionImpact(folder: WorkplaceFolderEntity): DeletionImpact =
+        getFolderDeletionImpact(folder.id)
 
     suspend fun duplicateFolder(folder: WorkplaceFolderEntity): Long = database.withTransaction {
         val newFolderId = folderDao.insertFolder(
@@ -167,10 +234,31 @@ class WorkerRepository(
     }
 
     suspend fun insertWorker(worker: WorkerEntity): Long = workerDao.insertWorker(worker)
-    suspend fun updateWorker(worker: WorkerEntity) = database.withTransaction {
+    suspend fun updateWorker(
+        worker: WorkerEntity,
+        dayAttendance: AttendanceEntity? = null
+    ) = database.withTransaction {
+        val oldWorker = workerDao.getWorkerByIdSync(worker.id)
+        if (oldWorker != null) {
+            attendanceDao.freezeLegacyAllowancesForWorker(
+                workerId = worker.id,
+                oldTransitAllowance = oldWorker.transitAllowance,
+                oldTransitImpact = oldWorker.transitImpact,
+                oldFoodAllowance = oldWorker.foodAllowance,
+                oldFoodImpact = oldWorker.foodImpact,
+                oldAccommodationAllowance = oldWorker.accommodationAllowance,
+                oldAccommodationImpact = oldWorker.accommodationImpact,
+                oldMedicalAllowance = oldWorker.medicalAllowance,
+                oldMedicalImpact = oldWorker.medicalImpact
+            )
+        }
+        if (dayAttendance != null) {
+            attendanceDao.upsertAttendance(dayAttendance.copy(hasCustomAllowances = true))
+        }
         workerDao.updateWorker(worker)
         expenseDao.updateWorkerName(worker.id, worker.name)
     }
+    suspend fun deactivateWorker(worker: WorkerEntity) = updateWorker(worker.copy(isActive = false))
     suspend fun deleteWorker(worker: WorkerEntity) = workerDao.deleteWorker(worker)
 
     suspend fun insertAttendance(attendance: AttendanceEntity): Long = attendanceDao.upsertAttendance(attendance)

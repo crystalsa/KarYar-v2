@@ -24,6 +24,7 @@ data class WorkerPerformance(
     val foodAllowanceTotal: Long = 0L,
     val accommodationAllowanceTotal: Long = 0L,
     val medicalAllowanceTotal: Long = 0L,
+    val otherAllowanceTotal: Long = 0L,
 
     // Deductions (کاهشی - کسورات از حقوق شخص مانند سهم اسکان/غذا)
     val totalDeductions: Long = 0L,
@@ -31,12 +32,19 @@ data class WorkerPerformance(
     val foodDeductionTotal: Long = 0L,
     val accommodationDeductionTotal: Long = 0L,
     val medicalDeductionTotal: Long = 0L,
+    val otherDeductionTotal: Long = 0L,
 
     val groupExpenseShare: Long = 0L,
     val netPayoutBeforeGroup: Long = 0L,
     val netPayout: Long,
     val rawNetPayoutBeforeGroup: Long = netPayoutBeforeGroup,
-    val rawNetPayout: Long = netPayout
+    val rawNetPayout: Long = netPayout,
+    /**
+     * قانون تسویه و بدهی کارگر:
+     * قابل پرداخت (netPayout) = max(raw, 0)
+     * بدهی کارگر (debtAmount) = max(-raw, 0)
+     */
+    val debtAmount: Long = kotlin.math.max(-rawNetPayout, 0L)
 ) {
     val individualExpensesTotal: Long
         get() = totalAllowances + totalDeductions

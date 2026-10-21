@@ -162,6 +162,21 @@ fun WorkerItemCard(
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (performance != null && performance.debtAmount > 0L) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = RoseAccent.copy(alpha = 0.12f),
+                                modifier = Modifier.padding(end = 6.dp)
+                            ) {
+                                Text(
+                                    text = "بدهکار: ${Formatters.formatCurrency(performance.debtAmount)}",
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = RoseAccent,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         StatusBadge(
                             text = statusBadgeInfo.first,
                             dotColor = statusBadgeInfo.second
@@ -292,13 +307,33 @@ fun WorkerItemCard(
                         )
                         Text(
                             text = if (isAbsent) {
-                                if (dayCalc.totalDeductions > 0) "-${Formatters.formatCurrency(dayCalc.totalDeductions)} (کسورات غیبت)"
+                                if (dayCalc.totalDeductions > 0) "بدهکار: ${Formatters.formatCurrency(dayCalc.totalDeductions)} (کسورات غیبت)"
                                 else "۰ تومان (غیبت)"
+                            } else if (netDayPayout < 0L) {
+                                "بدهکار: ${Formatters.formatCurrency(-netDayPayout)}"
                             } else Formatters.formatCurrency(netDayPayout),
                             fontSize = 13.5.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = if (isAbsent || netDayPayout < 0) RoseAccent else EmeraldAccent
                         )
+                    }
+
+                    if (performance != null && performance.debtAmount > 0L) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "وضعیت تسویه کل: ",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = RoseAccent
+                            )
+                            Text(
+                                text = "بدهکار: ${Formatters.formatCurrency(performance.debtAmount)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = RoseAccent
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -366,30 +401,46 @@ fun WorkerItemCard(
 
             // گزینه های ایاب و ذهاب و غیره زیر مبلغ پرداختی نهایی
             // قانون غیبت: افزایش ایاب و ذهاب و غیره شامل غایب نمی‌شود، اما فقط کسورات شامل می‌شود
+            val useAttAllowances = attendance != null && attendance.hasCustomAllowances
+            val effectiveTransit = if (useAttAllowances) attendance!!.transitAllowance else worker.transitAllowance
+            val effectiveTransitImpact = if (useAttAllowances) attendance!!.transitImpact else worker.transitImpact
+            val effectiveAccom = if (useAttAllowances) attendance!!.accommodationAllowance else worker.accommodationAllowance
+            val effectiveAccomImpact = if (useAttAllowances) attendance!!.accommodationImpact else worker.accommodationImpact
+            val effectiveFood = if (useAttAllowances) attendance!!.foodAllowance else worker.foodAllowance
+            val effectiveFoodImpact = if (useAttAllowances) attendance!!.foodImpact else worker.foodImpact
+            val effectiveMed = if (useAttAllowances) attendance!!.medicalAllowance else worker.medicalAllowance
+            val effectiveMedImpact = if (useAttAllowances) attendance!!.medicalImpact else worker.medicalImpact
+
             val financialItems = buildList {
-                if (worker.transitAllowance > 0) {
-                    val isAllowance = worker.transitImpact == "ALLOWANCE"
+                if (effectiveTransit > 0) {
+                    val isAllowance = effectiveTransitImpact == "ALLOWANCE"
                     if (!isAbsent || !isAllowance) {
-                        add(Triple("ایاب و ذهاب", worker.transitAllowance, isAllowance))
+                        add(Triple("ایاب و ذهاب", effectiveTransit, isAllowance))
                     }
                 }
-                if (worker.accommodationAllowance > 0) {
-                    val isAllowance = worker.accommodationImpact == "ALLOWANCE"
+                if (effectiveAccom > 0) {
+                    val isAllowance = effectiveAccomImpact == "ALLOWANCE"
                     if (!isAbsent || !isAllowance) {
-                        add(Triple("حق مسکن", worker.accommodationAllowance, isAllowance))
+                        add(Triple("حق مسکن", effectiveAccom, isAllowance))
                     }
                 }
-                if (worker.foodAllowance > 0) {
-                    val isAllowance = worker.foodImpact == "ALLOWANCE"
+                if (effectiveFood > 0) {
+                    val isAllowance = effectiveFoodImpact == "ALLOWANCE"
                     if (!isAbsent || !isAllowance) {
-                        add(Triple("خوراک", worker.foodAllowance, isAllowance))
+                        add(Triple("خوراک", effectiveFood, isAllowance))
                     }
                 }
-                if (worker.medicalAllowance > 0) {
-                    val isAllowance = worker.medicalImpact == "ALLOWANCE"
+                if (effectiveMed > 0) {
+                    val isAllowance = effectiveMedImpact == "ALLOWANCE"
                     if (!isAbsent || !isAllowance) {
-                        add(Triple("درمان", worker.medicalAllowance, isAllowance))
+                        add(Triple("درمان", effectiveMed, isAllowance))
                     }
+                }
+                if (performance != null && performance.otherAllowanceTotal > 0L) {
+                    add(Triple("سایر", performance.otherAllowanceTotal, true))
+                }
+                if (performance != null && performance.otherDeductionTotal > 0L) {
+                    add(Triple("سایر", performance.otherDeductionTotal, false))
                 }
             }
 

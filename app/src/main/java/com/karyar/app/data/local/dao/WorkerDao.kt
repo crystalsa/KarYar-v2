@@ -22,6 +22,9 @@ interface WorkerDao {
     @Query("SELECT * FROM workers WHERE id = :id")
     fun getWorkerById(id: Long): Flow<WorkerEntity?>
 
+    @Query("SELECT * FROM workers WHERE id = :id LIMIT 1")
+    suspend fun getWorkerByIdSync(id: Long): WorkerEntity?
+
     @Query("SELECT * FROM workers WHERE folderId = :folderId AND isActive = 1 ORDER BY name ASC")
     fun getActiveWorkersByFolder(folderId: Long): Flow<List<WorkerEntity>>
 

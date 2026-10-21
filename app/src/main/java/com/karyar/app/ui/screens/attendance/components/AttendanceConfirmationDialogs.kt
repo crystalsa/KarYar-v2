@@ -118,91 +118,95 @@ fun MustCreateDayDialog(
 fun DeleteWorkerConfirmDialog(
     workerName: String,
     dayInfo: String? = null,
+    deletionImpact: com.karyar.app.domain.model.DeletionImpact = com.karyar.app.domain.model.DeletionImpact(),
     onDismiss: () -> Unit,
     onRemoveFromDay: (() -> Unit)? = null,
+    onDeactivateWorker: (() -> Unit)? = null,
     onDeletePermanently: () -> Unit = onDismiss
 ) {
+    val daysCountPersian = com.karyar.app.util.Formatters.toPersianDigits(deletionImpact.attendanceDaysCount)
+    val settlementStr = deletionImpact.formatSettlementText()
+    val hasHistory = deletionImpact.hasHistory
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = if (dayInfo != null) "حذف کارگر از این روز" else "حذف کارگر از پروژه",
+                text = "حذف کارگر از این روز",
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp
             )
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                if (dayInfo != null && onRemoveFromDay != null) {
+                Text(
+                    text = "با حذف این کارگر، $daysCountPersian روز حضور و مبلغ $settlementStr از سوابق پاک می‌شود.",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = RoseAccent,
+                    lineHeight = 18.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                if (hasHistory && onDeactivateWorker != null) {
                     Text(
-                        text = "آیا از حذف «$workerName» از روز کاری $dayInfo اطمینان دارید؟",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "با «حذف از این روز»، این شخص فقط از این روز کاری حذف می‌شود و کارکرد او در سایر روزها و لیست کلی پرسنل محفوظ خواهد ماند.",
-                        fontSize = 11.5.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 17.sp
-                    )
-                } else {
-                    Text(
-                        text = "آیا از حذف کامل «$workerName» از تمامی روزها و لیست کلی پروژه اطمینان دارید؟\nاین عملیات غیرقابل بازگشت است.",
-                        fontSize = 12.5.sp,
+                        text = "پیشنهاد: برای حفظ کامل سوابق حضور و دستمزد «$workerName» در گزارش‌های مالی، گزینه «غیرفعال کردن» را انتخاب کنید.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
                         lineHeight = 18.sp
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
+                Text(
+                    text = if (dayInfo != null) {
+                        "با «حذف از این روز»، «$workerName» فقط از روز کاری $dayInfo حذف می‌شود و سوابق سایر روزها محفوظ می‌ماند."
+                    } else {
+                        "با «حذف از این روز»، «$workerName» فقط از این روز کاری حذف می‌شود و سوابق سایر روزها محفوظ می‌ماند."
+                    },
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 17.sp
+                )
             }
         },
         confirmButton = {
-            if (dayInfo != null && onRemoveFromDay != null) {
-                TextButton(
-                    onClick = onRemoveFromDay,
-                    modifier = Modifier.testTag("confirm_remove_worker_from_day_button")
-                ) {
-                    Text(
-                        text = "حذف از این روز",
-                        color = RoseAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.5.sp
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.End
+            ) {
+                if (hasHistory && onDeactivateWorker != null) {
+                    // دکمه اول (پیشنهادی): غیرفعال کردن (isActive = false)
+                    LoadingButton(
+                        text = "غیرفعال کردن (پیشنهادی)",
+                        onClick = onDeactivateWorker,
+                        containerColor = com.karyar.app.ui.theme.EmeraldAccent,
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 38.dp,
+                        fontSize = 12.sp,
+                        testTag = "deactivate_worker_button"
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
-            } else {
-                TextButton(
-                    onClick = onDeletePermanently,
-                    modifier = Modifier.testTag("confirm_delete_worker_permanently_button")
-                ) {
-                    Text(
-                        text = "حذف کامل",
-                        color = RoseAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.5.sp
-                    )
-                }
-            }
-        },
-        dismissButton = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (dayInfo != null && onRemoveFromDay != null) {
-                    TextButton(onClick = onDeletePermanently) {
-                        Text(
-                            text = "حذف از کل پروژه",
-                            fontSize = 11.sp,
-                            color = Slate400
-                        )
-                    }
-                }
+                // جایگزینی حذف دائمی با «حذف از این روز»
+                LoadingButton(
+                    text = "حذف از این روز",
+                    onClick = onRemoveFromDay ?: onDeletePermanently,
+                    containerColor = RoseAccent,
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 38.dp,
+                    fontSize = 12.sp,
+                    testTag = "confirm_remove_worker_from_day_button"
+                )
+                Spacer(modifier = Modifier.height(4.dp))
                 TextButton(onClick = onDismiss) {
                     Text(
                         text = "انصراف",
-                        fontSize = 13.sp,
+                        fontSize = 12.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-        }
+        },
+        dismissButton = {}
     )
 }
 
@@ -216,24 +220,38 @@ fun CopyWorkerConfirmDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "تکثیر",
+                text = "کپی کارگر (ساخت کارگر جدید)",
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp
             )
         },
         text = {
-            Text(
-                text = "آیا از تکثیر «$workerName» اطمینان دارید؟",
-                fontSize = 13.sp
-            )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "آیا از کپی کردن مشخصات «$workerName» اطمینان دارید؟",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "یک کارگر جدید با شناسه جدید و نام «$workerName (کپی)» ساخته می‌شود و اسم می‌تواند بعداً در بخش ویرایش تغییر کند.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 18.sp
+                )
+            }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) {
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag("confirm_copy_worker_button")
+            ) {
                 Text(
-                    text = "تکثیر",
+                    text = "تأیید و ساخت کارگر جدید",
                     color = AmberAccent,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.5.sp
+                    fontSize = 13.sp
                 )
             }
         },

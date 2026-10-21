@@ -27,3 +27,13 @@
 -keep class com.karyar.app.data.local.converter.** { *; }
 -keep class com.karyar.app.data.local.entity.** { *; }
 -keep class com.karyar.app.domain.model.** { *; }
+-keepclassmembers class * {
+    @androidx.room.TypeConverter *;
+}
+-keepclassmembers class com.karyar.app.data.local.entity.** { *; }
+-keepclassmembers class com.karyar.app.domain.model.** { *; }
+
+# Keep font resources and report export utilities (PDF & Excel)
+-keep class com.karyar.app.util.** { *; }
+-keepclassmembers class com.karyar.app.R$font { *; }
+

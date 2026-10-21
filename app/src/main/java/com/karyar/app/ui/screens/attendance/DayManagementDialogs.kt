@@ -622,9 +622,13 @@ fun EditDateFolderDialog(
 @Composable
 fun DeleteDayConfirmDialog(
     dateFolder: DateFolderEntity,
+    deletionImpact: com.karyar.app.domain.model.DeletionImpact = com.karyar.app.domain.model.DeletionImpact(),
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
+    val daysCountPersian = Formatters.toPersianDigits(deletionImpact.attendanceDaysCount)
+    val settlementStr = deletionImpact.formatSettlementText()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -635,14 +639,25 @@ fun DeleteDayConfirmDialog(
             )
         },
         text = {
-            Text(
-                text = "آیا از حذف روز ${dateFolder.dayOfWeek} (${Formatters.toPersianDigits(dateFolder.date)}) اطمینان دارید؟ تمام ترددهای ثبت‌شده برای این روز نیز حذف خواهند شد.",
-                fontSize = 12.5.sp
-            )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "آیا از حذف روز ${dateFolder.dayOfWeek} (${Formatters.toPersianDigits(dateFolder.date)}) اطمینان دارید؟",
+                    fontSize = 12.5.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "با حذف این روز کاری، $daysCountPersian روز حضور و مبلغ $settlementStr از سوابق پاک می‌شود.",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = RoseAccent,
+                    lineHeight = 18.sp
+                )
+            }
         },
         confirmButton = {
             LoadingButton(
-                text = "حذف",
+                text = "حذف دائمی روز",
                 onClick = onConfirm,
                 containerColor = RoseAccent,
                 height = 38.dp,

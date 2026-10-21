@@ -36,6 +36,12 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance WHERE dateFolderId = :dateFolderId ORDER BY id ASC")
     fun getAttendanceByDateFolder(dateFolderId: Long): Flow<List<AttendanceEntity>>
 
+    @Query("SELECT * FROM attendance WHERE dateFolderId = :dateFolderId")
+    suspend fun getAttendanceByDateFolderSync(dateFolderId: Long): List<AttendanceEntity>
+
+    @Query("SELECT * FROM attendance WHERE dateFolderId = :dateFolderId OR (folderId = :folderId AND date = :date)")
+    suspend fun getAttendanceForDateFolderSync(folderId: Long, dateFolderId: Long, date: String): List<AttendanceEntity>
+
     @Query("SELECT * FROM attendance WHERE folderId = :folderId AND epochDay BETWEEN :startEpoch AND :endEpoch ORDER BY epochDay ASC")
     fun getAttendanceBetweenEpochDays(folderId: Long, startEpoch: Long, endEpoch: Long): Flow<List<AttendanceEntity>>
 
@@ -68,6 +74,37 @@ interface AttendanceDao {
 
     @Query("DELETE FROM attendance WHERE dateFolderId = :dateFolderId")
     suspend fun deleteAttendanceByDateFolder(dateFolderId: Long)
+
+    @Query("DELETE FROM attendance WHERE dateFolderId = :dateFolderId OR (folderId = :folderId AND date = :date)")
+    suspend fun deleteAttendanceForDateFolder(folderId: Long, dateFolderId: Long, date: String)
+
+    @Query(
+        """
+        UPDATE attendance
+        SET
+            transitAllowance = :oldTransitAllowance,
+            transitImpact = :oldTransitImpact,
+            foodAllowance = :oldFoodAllowance,
+            foodImpact = :oldFoodImpact,
+            accommodationAllowance = :oldAccommodationAllowance,
+            accommodationImpact = :oldAccommodationImpact,
+            medicalAllowance = :oldMedicalAllowance,
+            medicalImpact = :oldMedicalImpact,
+            hasCustomAllowances = 1
+        WHERE workerId = :workerId AND hasCustomAllowances = 0
+        """
+    )
+    suspend fun freezeLegacyAllowancesForWorker(
+        workerId: Long,
+        oldTransitAllowance: Long,
+        oldTransitImpact: String,
+        oldFoodAllowance: Long,
+        oldFoodImpact: String,
+        oldAccommodationAllowance: Long,
+        oldAccommodationImpact: String,
+        oldMedicalAllowance: Long,
+        oldMedicalImpact: String
+    )
 
     @Query("DELETE FROM attendance")
     suspend fun clearAll()

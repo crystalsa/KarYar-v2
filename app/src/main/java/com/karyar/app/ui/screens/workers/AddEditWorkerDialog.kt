@@ -66,6 +66,7 @@ import com.karyar.app.ui.components.IconicsSize
 import com.karyar.app.ui.components.LoadingButton
 import com.karyar.app.ui.components.LoadingOutlinedButton
 import com.karyar.app.ui.screens.workers.components.OptionalWorkerFieldRow
+import com.karyar.app.ui.screens.workers.components.WorkerDailyWageSection
 import com.karyar.app.ui.screens.workers.components.WorkerDateBadgeCard
 import com.karyar.app.ui.screens.workers.components.WorkerExpensesSection
 import com.karyar.app.ui.screens.workers.components.WorkerHourlyWageSection
@@ -76,7 +77,6 @@ import com.karyar.app.ui.theme.EmeraldAccent
 import com.karyar.app.ui.theme.IndigoAccent
 import com.karyar.app.ui.theme.RoseAccent
 import com.karyar.app.ui.theme.Slate100
-import com.karyar.app.ui.theme.Slate200
 import com.karyar.app.ui.theme.Slate300
 import com.karyar.app.ui.theme.Slate500
 import com.karyar.app.util.Formatters
@@ -129,37 +129,58 @@ fun AddEditWorkerDialog(
     }
     var nationalId by remember { mutableStateOf(initialWorker?.nationalId ?: "") }
 
-    val initWage = if (initialAttendance != null && initialAttendance.dailyWage > 0L) {
-        initialAttendance.dailyWage
-    } else if (initialWorker != null && initialWorker.baseDailyWage > 0L) {
-        initialWorker.baseDailyWage
-    } else 0L
+    // Allowances & Deductions (each day is independent: reads from initialAttendance if hasCustomAllowances is true)
+    val useAttAllowances = initialAttendance != null && initialAttendance.hasCustomAllowances
+
+    val initWage = when {
+        useAttAllowances -> initialAttendance!!.dailyWage
+        initialAttendance != null && initialAttendance.dailyWage > 0L -> initialAttendance.dailyWage
+        else -> initialWorker?.baseDailyWage ?: 0L
+    }
+
+    val initialIsDailyWageEnabled = remember {
+        when {
+            initialAttendance != null -> {
+                if (useAttAllowances) initialAttendance.dailyWage > 0L
+                else initialAttendance.status != AttendanceStatus.HOURLY && initWage > 0L
+            }
+            initialWorker != null -> initialWorker.baseDailyWage > 0L
+            else -> true
+        }
+    }
+
+    var isDailyWageEnabled by remember { mutableStateOf(initialIsDailyWageEnabled) }
 
     var baseDailyWage by remember {
         mutableStateOf(if (initWage > 0L) Formatters.formatThousandsPersian(initWage) else "")
     }
 
-    // Hourly Wage State
-    val initHourlyHours = if (initialAttendance != null && initialAttendance.hourlyHours > 0.0) {
+    // Hourly Wage State (reads from current day's attendance if present)
+    val initHourlyHours = if (initialAttendance != null) {
         initialAttendance.hourlyHours
-    } else if (initialWorker != null && initialWorker.hourlyHours > 0.0) {
-        initialWorker.hourlyHours
-    } else 0.0
-
-    val initHourlyRate = if (initialAttendance != null && initialAttendance.hourlyWageRate > 0L) {
-        initialAttendance.hourlyWageRate
-    } else if (initialWorker != null && (initialWorker.hourlyWageRate > 0L || initialWorker.baseHourlyWage > 0L)) {
-        if (initialWorker.hourlyWageRate > 0L) initialWorker.hourlyWageRate else initialWorker.baseHourlyWage
-    } else 0L
-
-    var isHourlyEnabled by remember {
-        mutableStateOf(
-            (initialAttendance != null && initialAttendance.status == AttendanceStatus.HOURLY) ||
-            initialWorker?.isHourlyEnabled == true ||
-            initHourlyHours > 0.0 ||
-            initHourlyRate > 0L
-        )
+    } else {
+        initialWorker?.hourlyHours ?: 0.0
     }
+
+    val initHourlyRate = when {
+        useAttAllowances -> if (initialAttendance!!.hourlyWageRate > 0L) initialAttendance.hourlyWageRate else initialAttendance.hourlyWage
+        initialAttendance != null && initialAttendance.hourlyWageRate > 0L -> initialAttendance.hourlyWageRate
+        (initialWorker?.hourlyWageRate ?: 0L) > 0L -> initialWorker?.hourlyWageRate ?: 0L
+        else -> initialWorker?.baseHourlyWage ?: 0L
+    }
+
+    val initialIsHourlyEnabled = remember {
+        if (initialAttendance != null) {
+            (initialAttendance.status == AttendanceStatus.HOURLY && (initHourlyHours > 0.0 || initHourlyRate > 0L)) ||
+            initialAttendance.hourlyHours > 0.0
+        } else {
+            initialWorker?.isHourlyEnabled == true ||
+            (initialWorker?.hourlyWageRate ?: 0L) > 0L ||
+            (initialWorker?.baseHourlyWage ?: 0L) > 0L
+        }
+    }
+
+    var isHourlyEnabled by remember { mutableStateOf(initialIsHourlyEnabled) }
     var hourlyWageRate by remember {
         mutableStateOf(if (initHourlyRate > 0L) Formatters.formatThousandsPersian(initHourlyRate) else "")
     }
@@ -167,26 +188,30 @@ fun AddEditWorkerDialog(
         mutableStateOf(if (initHourlyHours > 0.0) initHourlyHours.toString().removeSuffix(".0") else "")
     }
 
-    // Overtime State
-    val initOtHours = if (initialAttendance != null && initialAttendance.overtimeHours > 0.0) {
+    // Overtime State (reads from current day's attendance if present)
+    val initOtHours = if (initialAttendance != null) {
         initialAttendance.overtimeHours
-    } else if (initialWorker != null && initialWorker.overtimeHours > 0.0) {
-        initialWorker.overtimeHours
-    } else 0.0
-
-    val initOtRate = if (initialAttendance != null && initialAttendance.overtimeRate > 0L) {
-        initialAttendance.overtimeRate
-    } else if (initialWorker != null && initialWorker.overtimeRate > 0L) {
-        initialWorker.overtimeRate
-    } else 0L
-
-    var isOvertimeEnabled by remember {
-        mutableStateOf(
-            initialWorker?.isOvertimeEnabled == true ||
-            initOtHours > 0.0 ||
-            initOtRate > 0L
-        )
+    } else {
+        initialWorker?.overtimeHours ?: 0.0
     }
+
+    val initOtRate = when {
+        useAttAllowances -> initialAttendance!!.overtimeRate
+        initialAttendance != null && initialAttendance.overtimeRate > 0L -> initialAttendance.overtimeRate
+        else -> initialWorker?.overtimeRate ?: 0L
+    }
+
+    val initialIsOvertimeEnabled = remember {
+        if (initialAttendance != null) {
+            initialAttendance.overtimeHours > 0.0
+        } else {
+            initialWorker?.isOvertimeEnabled == true ||
+            (initialWorker?.overtimeRate ?: 0L) > 0L ||
+            (initialWorker?.overtimeHours ?: 0.0) > 0.0
+        }
+    }
+
+    var isOvertimeEnabled by remember { mutableStateOf(initialIsOvertimeEnabled) }
     var overtimeRate by remember {
         mutableStateOf(if (initOtRate > 0L) Formatters.formatThousandsPersian(initOtRate) else "")
     }
@@ -203,35 +228,32 @@ fun AddEditWorkerDialog(
     }
     var selectedColor by remember { mutableStateOf(initialWorker?.colorTag ?: 0xFFD97706L) }
 
-    // Allowances & Deductions: read from attendance if customized for this day, otherwise fallback to worker
-    val useAttAllowances = initialAttendance != null && initialAttendance.hasCustomAllowances
-
-    val initTransit = if (useAttAllowances) initialAttendance.transitAllowance else (initialWorker?.transitAllowance ?: 0L)
-    val initTransitImpact = if (useAttAllowances) initialAttendance.transitImpact else (initialWorker?.transitImpact ?: "ALLOWANCE")
+    val initTransit = if (useAttAllowances) initialAttendance!!.transitAllowance else (initialWorker?.transitAllowance ?: 0L)
+    val initTransitImpact = if (useAttAllowances) initialAttendance!!.transitImpact else (initialWorker?.transitImpact ?: "ALLOWANCE")
     var transitEnabled by remember { mutableStateOf(initTransit > 0L) }
     var transitAllowance by remember {
         mutableStateOf(if (initTransit > 0L) Formatters.formatThousandsPersian(initTransit) else "")
     }
     var transitImpact by remember { mutableStateOf(initTransitImpact) }
 
-    val initFood = if (useAttAllowances) initialAttendance.foodAllowance else (initialWorker?.foodAllowance ?: 0L)
-    val initFoodImpact = if (useAttAllowances) initialAttendance.foodImpact else (initialWorker?.foodImpact ?: "ALLOWANCE")
+    val initFood = if (useAttAllowances) initialAttendance!!.foodAllowance else (initialWorker?.foodAllowance ?: 0L)
+    val initFoodImpact = if (useAttAllowances) initialAttendance!!.foodImpact else (initialWorker?.foodImpact ?: "ALLOWANCE")
     var foodEnabled by remember { mutableStateOf(initFood > 0L) }
     var foodAllowance by remember {
         mutableStateOf(if (initFood > 0L) Formatters.formatThousandsPersian(initFood) else "")
     }
     var foodImpact by remember { mutableStateOf(initFoodImpact) }
 
-    val initAccom = if (useAttAllowances) initialAttendance.accommodationAllowance else (initialWorker?.accommodationAllowance ?: 0L)
-    val initAccomImpact = if (useAttAllowances) initialAttendance.accommodationImpact else (initialWorker?.accommodationImpact ?: "ALLOWANCE")
+    val initAccom = if (useAttAllowances) initialAttendance!!.accommodationAllowance else (initialWorker?.accommodationAllowance ?: 0L)
+    val initAccomImpact = if (useAttAllowances) initialAttendance!!.accommodationImpact else (initialWorker?.accommodationImpact ?: "ALLOWANCE")
     var accommodationEnabled by remember { mutableStateOf(initAccom > 0L) }
     var accommodationAllowance by remember {
         mutableStateOf(if (initAccom > 0L) Formatters.formatThousandsPersian(initAccom) else "")
     }
     var accommodationImpact by remember { mutableStateOf(initAccomImpact) }
 
-    val initMed = if (useAttAllowances) initialAttendance.medicalAllowance else (initialWorker?.medicalAllowance ?: 0L)
-    val initMedImpact = if (useAttAllowances) initialAttendance.medicalImpact else (initialWorker?.medicalImpact ?: "ALLOWANCE")
+    val initMed = if (useAttAllowances) initialAttendance!!.medicalAllowance else (initialWorker?.medicalAllowance ?: 0L)
+    val initMedImpact = if (useAttAllowances) initialAttendance!!.medicalImpact else (initialWorker?.medicalImpact ?: "ALLOWANCE")
     var medicalEnabled by remember { mutableStateOf(initMed > 0L) }
     var medicalAllowance by remember {
         mutableStateOf(if (initMed > 0L) Formatters.formatThousandsPersian(initMed) else "")
@@ -244,24 +266,33 @@ fun AddEditWorkerDialog(
     val initialOvertimeRate = remember { if (initOtRate > 0L) Formatters.formatThousandsPersian(initOtRate) else "" }
     val initialOvertimeHours = remember { if (initOtHours > 0.0) initOtHours.toString().removeSuffix(".0") else "" }
 
+    val parsedCurrentTransit = if (transitEnabled) Formatters.parsePrice(transitAllowance) else 0L
+    val parsedCurrentFood = if (foodEnabled) Formatters.parsePrice(foodAllowance) else 0L
+    val parsedCurrentAccom = if (accommodationEnabled) Formatters.parsePrice(accommodationAllowance) else 0L
+    val parsedCurrentMed = if (medicalEnabled) Formatters.parsePrice(medicalAllowance) else 0L
+
     val isModified = (name != (initialWorker?.name ?: "")) ||
             (role != (initialWorker?.role ?: "کارگر ساده")) ||
             (isPhoneEnabled != (initialWorker?.phone?.isNotBlank() == true)) ||
             (phone != (initialWorker?.phone ?: "")) ||
             (isNationalIdEnabled != (initialWorker?.nationalId?.isNotBlank() == true)) ||
             (nationalId != (initialWorker?.nationalId ?: "")) ||
+            (isDailyWageEnabled != initialIsDailyWageEnabled) ||
             (baseDailyWage != initialDailyWage) ||
-            (isHourlyEnabled != (initialWorker?.isHourlyEnabled == true)) ||
+            (isHourlyEnabled != initialIsHourlyEnabled) ||
             (hourlyWageRate != initialHourlyRate) ||
             (hourlyHours != initialHourlyHours) ||
-            (isOvertimeEnabled != (initialWorker?.isOvertimeEnabled == true)) ||
+            (isOvertimeEnabled != initialIsOvertimeEnabled) ||
             (overtimeRate != initialOvertimeRate) ||
             (overtimeHours != initialOvertimeHours) ||
-            (notes != (initialWorker?.notes ?: "")) ||
-            (transitEnabled != (initialWorker != null && initialWorker.transitAllowance > 0)) ||
-            (foodEnabled != (initialWorker != null && initialWorker.foodAllowance > 0)) ||
-            (accommodationEnabled != (initialWorker != null && initialWorker.accommodationAllowance > 0)) ||
-            (medicalEnabled != (initialWorker != null && initialWorker.medicalAllowance > 0))
+            (parsedCurrentTransit != initTransit) ||
+            (!transitImpact.equals(initTransitImpact, ignoreCase = true)) ||
+            (parsedCurrentFood != initFood) ||
+            (!foodImpact.equals(initFoodImpact, ignoreCase = true)) ||
+            (parsedCurrentAccom != initAccom) ||
+            (!accommodationImpact.equals(initAccomImpact, ignoreCase = true)) ||
+            (parsedCurrentMed != initMed) ||
+            (!medicalImpact.equals(initMedImpact, ignoreCase = true))
 
     var showUnsavedAlert by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
@@ -277,103 +308,83 @@ fun AddEditWorkerDialog(
     fun saveWorker() {
         if (name.isNotBlank()) {
             isSaving = true
+            val parsedDailyWage = if (isDailyWageEnabled) Formatters.parsePrice(baseDailyWage) else 0L
             val parsedHourlyRate = if (isHourlyEnabled) Formatters.parsePrice(hourlyWageRate) else 0L
             val parsedHourlyHours = if (isHourlyEnabled) Formatters.parseDouble(hourlyHours) else 0.0
             val parsedOvertimeRate = if (isOvertimeEnabled) Formatters.parsePrice(overtimeRate) else 0L
             val parsedOvertimeHours = if (isOvertimeEnabled) Formatters.parseDouble(overtimeHours) else 0.0
 
+            val parsedTransit = if (transitEnabled) Formatters.parsePrice(transitAllowance) else 0L
+            val parsedFood = if (foodEnabled) Formatters.parsePrice(foodAllowance) else 0L
+            val parsedAccom = if (accommodationEnabled) Formatters.parsePrice(accommodationAllowance) else 0L
+            val parsedMed = if (medicalEnabled) Formatters.parsePrice(medicalAllowance) else 0L
+
             val finalPhone = if (isPhoneEnabled) phone.trim() else ""
             val finalNationalId = if (isNationalIdEnabled) nationalId.trim() else ""
 
+            val isEditingSpecificDay = initialWorker != null && initialAttendance != null
             val entity = (initialWorker ?: WorkerEntity(name = name, role = role)).copy(
                 name = name.trim(),
                 role = role.trim(),
                 phone = finalPhone,
                 nationalId = finalNationalId,
-                baseDailyWage = if (isHourlyEnabled) 0L else Formatters.parsePrice(baseDailyWage),
-                baseHourlyWage = if (isHourlyEnabled) parsedHourlyRate else 0L,
-                isHourlyEnabled = isHourlyEnabled,
-                hourlyWageRate = if (isHourlyEnabled) parsedHourlyRate else 0L,
-                hourlyHours = if (isHourlyEnabled) parsedHourlyHours else 0.0,
-                isOvertimeEnabled = isOvertimeEnabled,
-                overtimeRate = parsedOvertimeRate,
-                overtimeHours = parsedOvertimeHours,
+                baseDailyWage = if (isEditingSpecificDay) initialWorker!!.baseDailyWage else parsedDailyWage,
+                baseHourlyWage = if (isEditingSpecificDay) initialWorker!!.baseHourlyWage else parsedHourlyRate,
+                isHourlyEnabled = if (isEditingSpecificDay) initialWorker!!.isHourlyEnabled else isHourlyEnabled,
+                hourlyWageRate = if (isEditingSpecificDay) initialWorker!!.hourlyWageRate else parsedHourlyRate,
+                hourlyHours = if (isEditingSpecificDay) initialWorker!!.hourlyHours else parsedHourlyHours,
+                isOvertimeEnabled = if (isEditingSpecificDay) initialWorker!!.isOvertimeEnabled else isOvertimeEnabled,
+                overtimeRate = if (isEditingSpecificDay) initialWorker!!.overtimeRate else parsedOvertimeRate,
+                overtimeHours = if (isEditingSpecificDay) initialWorker!!.overtimeHours else parsedOvertimeHours,
                 isActive = isActive,
-                notes = notes.trim(),
+                notes = if (isEditingSpecificDay) initialWorker!!.notes else notes.trim(),
                 colorTag = selectedColor,
-                transitAllowance = if (transitEnabled) Formatters.parsePrice(transitAllowance) else 0L,
-                transitImpact = transitImpact,
-                foodAllowance = if (foodEnabled) Formatters.parsePrice(foodAllowance) else 0L,
-                foodImpact = foodImpact,
-                accommodationAllowance = if (accommodationEnabled) Formatters.parsePrice(accommodationAllowance) else 0L,
-                accommodationImpact = accommodationImpact,
-                medicalAllowance = if (medicalEnabled) Formatters.parsePrice(medicalAllowance) else 0L,
-                medicalImpact = medicalImpact
+                transitAllowance = if (isEditingSpecificDay) initialWorker!!.transitAllowance else parsedTransit,
+                transitImpact = if (isEditingSpecificDay) initialWorker!!.transitImpact else transitImpact,
+                foodAllowance = if (isEditingSpecificDay) initialWorker!!.foodAllowance else parsedFood,
+                foodImpact = if (isEditingSpecificDay) initialWorker!!.foodImpact else foodImpact,
+                accommodationAllowance = if (isEditingSpecificDay) initialWorker!!.accommodationAllowance else parsedAccom,
+                accommodationImpact = if (isEditingSpecificDay) initialWorker!!.accommodationImpact else accommodationImpact,
+                medicalAllowance = if (isEditingSpecificDay) initialWorker!!.medicalAllowance else parsedMed,
+                medicalImpact = if (isEditingSpecificDay) initialWorker!!.medicalImpact else medicalImpact
             )
-            if (onConfirmAttendance != null) {
-                val parsedDailyWage = if (isHourlyEnabled) 0L else Formatters.parsePrice(baseDailyWage)
-                val baseAtt = initialAttendance ?: WageCalculator.defaultAttendanceFor(
-                    worker = entity,
-                    date = workDate,
-                    notes = notes.trim()
-                )
-                val status = when {
-                    isHourlyEnabled -> AttendanceStatus.HOURLY
-                    baseAtt.status == AttendanceStatus.ABSENT -> AttendanceStatus.ABSENT
-                    baseAtt.status == AttendanceStatus.HALF_DAY -> AttendanceStatus.HALF_DAY
-                    else -> AttendanceStatus.FULL_DAY
+
+            if (initialAttendance != null && onConfirmAttendance != null) {
+                val newStatus = when {
+                    initialAttendance.status == AttendanceStatus.ABSENT -> AttendanceStatus.ABSENT
+                    isHourlyEnabled && !isDailyWageEnabled -> AttendanceStatus.HOURLY
+                    !isHourlyEnabled && initialAttendance.status == AttendanceStatus.HOURLY -> AttendanceStatus.FULL_DAY
+                    isDailyWageEnabled && initialAttendance.status == AttendanceStatus.HOURLY -> AttendanceStatus.FULL_DAY
+                    else -> initialAttendance.status
                 }
-                val regHours = when (status) {
-                    AttendanceStatus.FULL_DAY -> 8.0
-                    AttendanceStatus.HALF_DAY -> 4.0
-                    else -> 0.0
-                }
-                val hHours = when (status) {
-                    AttendanceStatus.HOURLY -> parsedHourlyHours
-                    else -> 0.0
-                }
-                val otHours = when (status) {
-                    AttendanceStatus.ABSENT -> 0.0
-                    else -> parsedOvertimeHours
-                }
-                val updatedAtt = baseAtt.copy(
-                    status = status,
-                    regularHours = regHours,
+                val updatedAtt = initialAttendance.copy(
+                    status = newStatus,
                     dailyWage = parsedDailyWage,
-                    hourlyHours = hHours,
-                    hourlyWageRate = parsedHourlyRate,
+                    regularHours = when (newStatus) {
+                        AttendanceStatus.FULL_DAY -> 8.0
+                        AttendanceStatus.HALF_DAY -> 4.0
+                        else -> 0.0
+                    },
                     hourlyWage = parsedHourlyRate,
-                    overtimeHours = otHours,
+                    hourlyWageRate = parsedHourlyRate,
+                    hourlyHours = parsedHourlyHours,
+                    overtimeHours = parsedOvertimeHours,
                     overtimeRate = parsedOvertimeRate,
-                    transitAllowance = if (transitEnabled) Formatters.parsePrice(transitAllowance) else 0L,
+                    notes = notes.trim(),
+                    transitAllowance = parsedTransit,
                     transitImpact = transitImpact,
-                    foodAllowance = if (foodEnabled) Formatters.parsePrice(foodAllowance) else 0L,
+                    foodAllowance = parsedFood,
                     foodImpact = foodImpact,
-                    accommodationAllowance = if (accommodationEnabled) Formatters.parsePrice(accommodationAllowance) else 0L,
+                    accommodationAllowance = parsedAccom,
                     accommodationImpact = accommodationImpact,
-                    medicalAllowance = if (medicalEnabled) Formatters.parsePrice(medicalAllowance) else 0L,
+                    medicalAllowance = parsedMed,
                     medicalImpact = medicalImpact,
-                    hasCustomAllowances = true,
-                    notes = notes.trim()
+                    hasCustomAllowances = true
                 )
                 onConfirmAttendance(updatedAtt)
-                if (initialWorker != null) {
-                    val updatedProfile = initialWorker.copy(
-                        name = name.trim(),
-                        role = role.trim(),
-                        phone = finalPhone,
-                        nationalId = finalNationalId,
-                        isActive = isActive,
-                        colorTag = selectedColor,
-                        notes = notes.trim()
-                    )
-                    onConfirm(updatedProfile)
-                } else {
-                    onConfirm(entity)
-                }
-            } else {
-                onConfirm(entity)
             }
+
+            onConfirm(entity)
         }
     }
 
@@ -531,34 +542,12 @@ fun AddEditWorkerDialog(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Base Daily Wage
-                OutlinedTextField(
-                    value = baseDailyWage,
-                    onValueChange = { baseDailyWage = Formatters.formatPriceInput(it) },
-                    enabled = !isHourlyEnabled,
-                    label = {
-                        Text(
-                            text = if (isHourlyEnabled) "دستمزد روزانه (خاموش شده)" else "دستمزد روزانه ثابت (تومان)",
-                            fontSize = 12.sp,
-                            color = if (isHourlyEnabled) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) else AmberAccent
-                        )
-                    },
-                    placeholder = {
-                        Text(
-                            text = if (isHourlyEnabled) "خاموش (دستمزد ساعتی فعال است)" else "مثلاً ۱,۲۰۰,۰۰۰",
-                            fontSize = 11.sp
-                        )
-                    },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        disabledContainerColor = Slate100.copy(alpha = 0.6f),
-                        disabledTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                        disabledBorderColor = Slate200.copy(alpha = 0.7f),
-                        disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                    )
+                // Base Daily Wage Section (with Checkbox)
+                WorkerDailyWageSection(
+                    isDailyWageEnabled = isDailyWageEnabled,
+                    onDailyWageEnabledChange = { isDailyWageEnabled = it },
+                    baseDailyWage = baseDailyWage,
+                    onBaseDailyWageChange = { baseDailyWage = it }
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))

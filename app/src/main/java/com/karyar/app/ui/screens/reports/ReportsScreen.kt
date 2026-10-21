@@ -27,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -211,6 +212,56 @@ fun ReportsScreen(
             }
         }
 
+        // Project Grand Totals & Worker Debt Summary
+        item {
+            val totalDebt = performances.sumOf { it.debtAmount }
+            HairlineCard(
+                modifier = Modifier.fillMaxWidth(),
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "مجموع کل مخارج و هزینه‌های پروژه:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = if (analytics.grandTotalProjectCost < 0L) "بدهکار: ${Formatters.formatCurrency(-analytics.grandTotalProjectCost)}" else Formatters.formatCurrency(analytics.grandTotalProjectCost),
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (analytics.grandTotalProjectCost < 0L) RoseAccent else EmeraldAccent
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "مجموع بدهی کارگران:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (totalDebt > 0L) RoseAccent else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (totalDebt > 0L) "بدهکار: ${Formatters.formatCurrency(totalDebt)}" else "۰ تومان",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (totalDebt > 0L) RoseAccent else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
         // 2. Section Header
         item {
             Row(
@@ -313,18 +364,33 @@ private fun WorkerPaySlipCard(perf: WorkerPerformance) {
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "خالص دریافتی",
+                        text = if (perf.debtAmount > 0L) "وضعیت حساب" else "خالص دریافتی",
                         fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        text = Formatters.formatCurrency(perf.netPayout),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = EmeraldAccent,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    if (perf.debtAmount > 0L) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = RoseAccent.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                text = "بدهکار: ${Formatters.formatCurrency(perf.debtAmount)}",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = RoseAccent,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = Formatters.formatCurrency(perf.netPayout),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = EmeraldAccent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
 
@@ -354,8 +420,17 @@ private fun WorkerPaySlipCard(perf: WorkerPerformance) {
                 if (perf.totalAllowances > 0) {
                     ReportRow("(+) مجموع کمک‌هزینه‌های افزایشی:", "+${Formatters.formatCurrency(perf.totalAllowances)}", EmeraldAccent)
                 }
+                if (perf.otherAllowanceTotal > 0L) {
+                    ReportRow("(+) سایر (افزایشی):", "+${Formatters.formatCurrency(perf.otherAllowanceTotal)}", EmeraldAccent)
+                }
                 if (perf.totalDeductions > 0) {
                     ReportRow("(-) مجموع کسورات:", "-${Formatters.formatCurrency(perf.totalDeductions)}", RoseAccent)
+                }
+                if (perf.otherDeductionTotal > 0L) {
+                    ReportRow("(-) سایر (کسورات):", "-${Formatters.formatCurrency(perf.otherDeductionTotal)}", RoseAccent)
+                }
+                if (perf.debtAmount > 0L) {
+                    ReportRow("وضعیت بدهی کارگر:", "بدهکار: ${Formatters.formatCurrency(perf.debtAmount)}", RoseAccent)
                 }
             }
         }

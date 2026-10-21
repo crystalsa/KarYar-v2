@@ -1,6 +1,7 @@
 package com.karyar.app.data.local
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
@@ -20,6 +21,9 @@ import com.karyar.app.data.local.entity.ExpenseEntity
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
 import com.karyar.app.util.JalaliCalendar
+import java.io.File
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 @Database(
     entities = [
@@ -41,6 +45,13 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun expenseDao(): ExpenseDao
 
     companion object {
+        private const val TAG = "AppDatabase"
+        const val DB_NAME = "worker_management_db"
+        const val CURRENT_DB_VERSION = 7
+        const val BACKUP_DIR_NAME = "db_backups"
+        const val MAX_BACKUPS = 3
+        private val backupSeq = AtomicLong(0L)
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -291,6 +302,18 @@ abstract class AppDatabase : RoomDatabase() {
 
                 // 2. Deduplicate attendance rows before creating unique index on (workerId, date).
                 // Keep the record with the latest timestamp (tie-break with max id).
+                val duplicateCountCursor = db.query("""
+                    SELECT COUNT(*) FROM `attendance`
+                    WHERE `id` IN (
+                        SELECT a1.id
+                        FROM `attendance` a1
+                        JOIN `attendance` a2 ON a1.workerId = a2.workerId AND a1.date = a2.date
+                        WHERE (a1.timestamp < a2.timestamp) OR (a1.timestamp = a2.timestamp AND a1.id < a2.id)
+                    )
+                """.trimIndent())
+                val deletedDuplicateCount = if (duplicateCountCursor.moveToFirst()) duplicateCountCursor.getInt(0) else 0
+                duplicateCountCursor.close()
+
                 db.execSQL("""
                     DELETE FROM `attendance`
                     WHERE `id` IN (
@@ -300,6 +323,7 @@ abstract class AppDatabase : RoomDatabase() {
                         WHERE (a1.timestamp < a2.timestamp) OR (a1.timestamp = a2.timestamp AND a1.id < a2.id)
                     )
                 """.trimIndent())
+                Log.w(TAG, "MIGRATION_5_6: Removed $deletedDuplicateCount duplicate attendance row(s).")
 
                 // 3. Recreate workers table (without dateFolderId, workDate, dayOfWeek; with ForeignKey to workplace_folders)
                 // RULE: Worker identity is strictly worker.id. NO worker merging across names or folders.
@@ -490,7 +514,10 @@ abstract class AppDatabase : RoomDatabase() {
                     WHERE `dateFolderId` <= 0 AND `folderId` IN (SELECT `id` FROM `workplace_folders`)
                 """.trimIndent())
 
-                // Convert status with single CASE WHEN statement respecting explicit priorities
+                // هشدار معماری (فقط مخصوص همین مایگریشن قدیمی ۵ به ۶):
+                // تشخیص وضعیت حضور از روی متن فیلد `notes` (مانند LIKE '%غیبت%') صرفاً برای تبدیل داده‌های قدیمی نسخه ۵ به ستون `status` در نسخه ۶ مجاز است.
+                // در هیچ جای دیگر پروژه (دامنه، محاسبات دستمزد، مخزن داده یا UI) هرگز نباید وضعیت حضور از روی `notes` خوانده یا حدس زده شود؛
+                // منبع حقیقت وضعیت حضور در کل برنامه منحصراً `AttendanceEntity.status` است.
                 db.execSQL("""
                     UPDATE `attendance_new`
                     SET `status` = CASE
@@ -572,12 +599,16 @@ abstract class AppDatabase : RoomDatabase() {
                 }
                 fkCursor.close()
 
-                if (fkViolations.isNotEmpty()) {
-                    val summary = fkViolations.groupBy { it.first }.map { "${it.key}: ${it.value.size}" }.joinToString(", ")
-                    Log.w("AppDatabase", "MIGRATION_5_6: Removing ${fkViolations.size} orphan row(s) violating foreign keys ($summary).")
+                val uniqueOrphanRows = fkViolations.distinctBy { it.first to it.second }
+                val deletedOrphanCount = uniqueOrphanRows.size
+                val summary = if (uniqueOrphanRows.isNotEmpty()) {
+                    uniqueOrphanRows.groupBy { it.first }.map { "${it.key}: ${it.value.size}" }.joinToString(", ")
+                } else {
+                    "none"
                 }
+                Log.w(TAG, "MIGRATION_5_6: Removed $deletedOrphanCount orphan row(s) violating foreign keys ($summary).")
 
-                for ((table, rowid) in fkViolations) {
+                for ((table, rowid) in uniqueOrphanRows) {
                     db.execSQL("DELETE FROM `$table` WHERE rowid = ?", arrayOf<Any>(rowid))
                 }
             }
@@ -594,26 +625,102 @@ abstract class AppDatabase : RoomDatabase() {
                 addColumnIfNotExists(db, "attendance", "medicalAllowance", "INTEGER NOT NULL DEFAULT 0")
                 addColumnIfNotExists(db, "attendance", "medicalImpact", "TEXT NOT NULL DEFAULT 'ALLOWANCE'")
                 addColumnIfNotExists(db, "attendance", "hasCustomAllowances", "INTEGER NOT NULL DEFAULT 0")
+
+                // کپی مقادیر مزایا و نوع تأثیر (Impact) از جدول workers برای تمام ردیف‌های حضور قدیمی (hasCustomAllowances = 0)
+                // و قرار دادن hasCustomAllowances = 1 تا هر روز کاری مستقل شود بدون اینکه جمع مالی هیچ کارگری تغییر کند.
+                db.execSQL(
+                    """
+                    UPDATE `attendance`
+                    SET
+                        `transitAllowance` = COALESCE((SELECT w.`transitAllowance` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `transitAllowance`),
+                        `transitImpact` = COALESCE((SELECT w.`transitImpact` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `transitImpact`),
+                        `foodAllowance` = COALESCE((SELECT w.`foodAllowance` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `foodAllowance`),
+                        `foodImpact` = COALESCE((SELECT w.`foodImpact` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `foodImpact`),
+                        `accommodationAllowance` = COALESCE((SELECT w.`accommodationAllowance` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `accommodationAllowance`),
+                        `accommodationImpact` = COALESCE((SELECT w.`accommodationImpact` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `accommodationImpact`),
+                        `medicalAllowance` = COALESCE((SELECT w.`medicalAllowance` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `medicalAllowance`),
+                        `medicalImpact` = COALESCE((SELECT w.`medicalImpact` FROM `workers` w WHERE w.`id` = `attendance`.`workerId`), `medicalImpact`),
+                        `hasCustomAllowances` = 1
+                    WHERE `hasCustomAllowances` = 0
+                    """.trimIndent()
+                )
+            }
+        }
+
+        internal fun backupDatabaseBeforeMigrationIfNeeded(context: Context) {
+            try {
+                val dbFile = context.getDatabasePath(DB_NAME)
+                if (!dbFile.exists() || !dbFile.isFile || dbFile.length() == 0L) {
+                    return
+                }
+
+                val existingVersion = SQLiteDatabase.openDatabase(
+                    dbFile.absolutePath,
+                    null,
+                    SQLiteDatabase.OPEN_READONLY
+                ).use { sqliteDb ->
+                    sqliteDb.rawQuery("PRAGMA user_version", null).use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    }
+                }
+
+                if (existingVersion < CURRENT_DB_VERSION) {
+                    val backupDir = File(context.filesDir, BACKUP_DIR_NAME)
+                    if (!backupDir.exists() && !backupDir.mkdirs()) {
+                        Log.w(TAG, "Could not create backup directory: ${backupDir.absolutePath}")
+                        return
+                    }
+
+                    val backupFileName = String.format(
+                        Locale.US,
+                        "%s_v%d_%013d_%06d.db",
+                        DB_NAME,
+                        existingVersion,
+                        System.currentTimeMillis(),
+                        backupSeq.incrementAndGet()
+                    )
+                    val backupFile = File(backupDir, backupFileName)
+                    dbFile.copyTo(backupFile, overwrite = true)
+                    Log.i(TAG, "Backed up database v$existingVersion before migration to ${backupFile.name}")
+
+                    val allBackups = backupDir.listFiles()
+                        ?.filter { it.isFile && it.name.startsWith(DB_NAME) }
+                        ?.sortedWith(compareBy<File> { it.lastModified() }.thenBy { it.name })
+                        ?: emptyList()
+
+                    if (allBackups.size > MAX_BACKUPS) {
+                        val toDelete = allBackups.dropLast(MAX_BACKUPS)
+                        for (oldFile in toDelete) {
+                            oldFile.delete()
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed to create pre-migration database backup; continuing app startup.", t)
             }
         }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "worker_management_db"
-                )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
-                    .addCallback(object : RoomDatabase.Callback() {
-                        override fun onOpen(db: SupportSQLiteDatabase) {
-                            super.onOpen(db)
-                            db.execSQL("PRAGMA foreign_keys = ON;")
-                        }
-                    })
-                    .build()
-                INSTANCE = instance
-                instance
+                INSTANCE ?: run {
+                    val appContext = context.applicationContext ?: context
+                    backupDatabaseBeforeMigrationIfNeeded(appContext)
+                    val instance = Room.databaseBuilder(
+                        appContext,
+                        AppDatabase::class.java,
+                        DB_NAME
+                    )
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                        .addCallback(object : RoomDatabase.Callback() {
+                            override fun onOpen(db: SupportSQLiteDatabase) {
+                                super.onOpen(db)
+                                db.execSQL("PRAGMA foreign_keys = ON;")
+                            }
+                        })
+                        .build()
+                    INSTANCE = instance
+                    instance
+                }
             }
         }
     }

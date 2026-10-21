@@ -21,5 +21,6 @@ data class DashboardAnalytics(
     val totalIndividualExpenses: Long = 0L,
     val totalGroupExpenses: Long = 0L,
     val grandTotalExpenses: Long = 0L,
-    val grandTotalProjectCost: Long = 0L
+    val grandTotalProjectCost: Long = 0L,
+    val totalWorkerDebt: Long = 0L
 )

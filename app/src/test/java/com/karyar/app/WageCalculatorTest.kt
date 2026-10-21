@@ -608,8 +608,11 @@ class WageCalculatorTest {
 
         assertEquals(2, summary.workerPerformances.size)
         // Worker A: 1,000,000 netBeforeGroup; Worker B: 5 * 200k = 1,000,000 netBeforeGroup
-        val expectedGrandTotal = summary.workerPerformances.sumOf { it.netPayoutBeforeGroup }
-        assertEquals(2_000_000L, expectedGrandTotal)
+        val totalBeforeGroup = summary.workerPerformances.sumOf { it.netPayoutBeforeGroup }
+        assertEquals(2_000_000L, totalBeforeGroup)
+        // با تعریف واحد، هزینه گروهی (300,000) از هزینه کل پروژه نیز کسر می‌شود تا با حساب روزانه یکسان باشد:
+        val expectedGrandTotal = summary.workerPerformances.sumOf { it.rawNetPayout }
+        assertEquals(1_700_000L, expectedGrandTotal)
         assertEquals(expectedGrandTotal, summary.grandTotalProjectCost)
         assertEquals(2, summary.totalWorkDaysCount)
         assertEquals(13.0, summary.totalWorkHours, 0.001) // 8 + 5
@@ -772,5 +775,489 @@ class WageCalculatorTest {
 
         // The sum of daily numbers strictly matches the final settlement!
         assertEquals(sumDailyNets, performance.netPayout)
+    }
+
+    // 31. تست الف: کارگری با یک روز غیبت و کسورات بیشتر از دستمزد کل، که قابل پرداخت صفر و بدهی مثبت دارد
+    @Test
+    fun testAbsentDayWithDeductionsExceedingGross_hasZeroPayoutAndPositiveDebt() {
+        val worker = baseDailyWorker.copy(
+            id = 701L,
+            baseDailyWage = 500_000L,
+            accommodationAllowance = 200_000L,
+            accommodationImpact = "DEDUCTION"
+        )
+        // یک روز غیبت: دستمزد و مزایا صفر، کسورات ۲۰۰,۰۰۰ تومان
+        val attAbsent = AttendanceEntity(
+            workerId = 701L,
+            date = "1405/01/01",
+            status = AttendanceStatus.ABSENT
+        )
+
+        val perf = WageCalculator.calculateWorkerPerformance(worker, listOf(attAbsent))
+
+        // ۱. دستمزد و کارکرد صفر است چون غایب بوده
+        assertEquals(0, perf.totalShifts)
+        assertEquals(0L, perf.baseWageTotal)
+        assertEquals(200_000L, perf.totalDeductions)
+
+        // ۲. مبلغ خام برابر ۲۰۰,۰۰۰- تومان است
+        assertEquals(-200_000L, perf.rawNetPayout)
+
+        // ۳. قانون پروژه: قابل پرداخت = max(raw, 0) -> صفر
+        assertEquals(0L, perf.netPayout)
+
+        // ۴. قانون پروژه: بدهی کارگر = max(-raw, 0) -> ۲۰۰,۰۰۰ تومان
+        assertEquals(200_000L, perf.debtAmount)
+    }
+
+    // 32. تست ب: جمع netPayout خام همه روزها برابر rawNetPayout کل باشد
+    @Test
+    fun testSumOfRawDailyNetsEqualsTotalRawNetPayout() {
+        val worker = baseDailyWorker.copy(
+            id = 702L,
+            baseDailyWage = 600_000L,
+            foodAllowance = 100_000L,
+            foodImpact = "DEDUCTION",
+            transitAllowance = 50_000L,
+            transitImpact = "ALLOWANCE"
+        )
+
+        // روز اول: تمام روز (دستمزد ۶۰۰k + مزایا ۵۰k - کسورات ۱۰۰k = ۵۵۰k)
+        val day1 = AttendanceEntity(workerId = 702L, date = "1405/01/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0)
+        // روز دوم: غایب (دستمزد ۰ + مزایا ۰ - کسورات ۱۰۰k = ۱۰۰k-)
+        val day2 = AttendanceEntity(workerId = 702L, date = "1405/01/02", status = AttendanceStatus.ABSENT)
+        // روز سوم: نصف روز (دستمزد ۳۰۰k + مزایا ۵۰k - کسورات ۱۰۰k = ۲۵۰k)
+        val day3 = AttendanceEntity(workerId = 702L, date = "1405/01/03", status = AttendanceStatus.HALF_DAY, regularHours = 4.0)
+        // روز چهارم: غایب با کسورات اضافی (دستمزد ۰ + مزایا ۰ - کسورات ۱۰۰k = ۱۰۰k-)
+        val day4 = AttendanceEntity(workerId = 702L, date = "1405/01/04", status = AttendanceStatus.ABSENT)
+
+        val res1 = WageCalculator.calculateDay(worker, day1)
+        val res2 = WageCalculator.calculateDay(worker, day2)
+        val res3 = WageCalculator.calculateDay(worker, day3)
+        val res4 = WageCalculator.calculateDay(worker, day4)
+
+        assertEquals(550_000L, res1.netPayout)
+        assertEquals(-100_000L, res2.netPayout)
+        assertEquals(250_000L, res3.netPayout)
+        assertEquals(-100_000L, res4.netPayout)
+
+        val sumRawDailyNets = res1.netPayout + res2.netPayout + res3.netPayout + res4.netPayout
+        assertEquals(600_000L, sumRawDailyNets)
+
+        val perf = WageCalculator.calculateWorkerPerformance(worker, listOf(day1, day2, day3, day4))
+
+        // جمع netPayout خام همه روزها باید دقیقاً برابر rawNetPayout کل باشد
+        assertEquals(sumRawDailyNets, perf.rawNetPayout)
+
+        // همچنین در حالتی که مجموع کسورات بیشتر از کل دستمزدها شود
+        val workerIndebted = worker.copy(
+            foodAllowance = 600_000L // 600k * 4 = 2,400,000L deductions vs 900,000 wage + 100,000 allowance = 1,000,000L gross
+        )
+        val resDebt1 = WageCalculator.calculateDay(workerIndebted, day1) // 600k + 50k - 600k = 50k
+        val resDebt2 = WageCalculator.calculateDay(workerIndebted, day2) // -600k
+        val resDebt3 = WageCalculator.calculateDay(workerIndebted, day3) // 300k + 50k - 600k = -250k
+        val resDebt4 = WageCalculator.calculateDay(workerIndebted, day4) // -600k
+
+        val sumDebtDailyNets = resDebt1.netPayout + resDebt2.netPayout + resDebt3.netPayout + resDebt4.netPayout
+        assertEquals(-1_400_000L, sumDebtDailyNets)
+
+        val perfDebt = WageCalculator.calculateWorkerPerformance(workerIndebted, listOf(day1, day2, day3, day4))
+        assertEquals(sumDebtDailyNets, perfDebt.rawNetPayout)
+        assertEquals(0L, perfDebt.netPayout)
+        assertEquals(1_400_000L, perfDebt.debtAmount)
+    }
+
+    // 33. هماهنگی کامل حساب روزانه و کل پروژه (بدون هزینه گروهی)
+    @Test
+    fun testSumOfGrandDailyCostEqualsGrandTotalProjectCost_withoutGroupExpenses() {
+        val worker1 = baseDailyWorker.copy(
+            id = 801L,
+            baseDailyWage = 1_000_000L,
+            transitAllowance = 50_000L,
+            transitImpact = "ALLOWANCE",
+            foodAllowance = 100_000L,
+            foodImpact = "DEDUCTION"
+        )
+        val worker2 = baseHourlyWorker.copy(
+            id = 802L,
+            baseHourlyWage = 150_000L,
+            hourlyWageRate = 150_000L
+        )
+
+        val dates = listOf("1405/02/01", "1405/02/02", "1405/02/03")
+        val attendances = listOf(
+            AttendanceEntity(workerId = 801L, date = "1405/02/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0),
+            AttendanceEntity(workerId = 802L, date = "1405/02/01", status = AttendanceStatus.HOURLY, hourlyHours = 6.0, hourlyWageRate = 150_000L),
+            AttendanceEntity(workerId = 801L, date = "1405/02/02", status = AttendanceStatus.HALF_DAY, regularHours = 4.0),
+            AttendanceEntity(workerId = 802L, date = "1405/02/02", status = AttendanceStatus.HOURLY, hourlyHours = 4.0, hourlyWageRate = 150_000L),
+            AttendanceEntity(workerId = 801L, date = "1405/02/03", status = AttendanceStatus.FULL_DAY, regularHours = 8.0, overtimeHours = 2.0, overtimeRate = 200_000L)
+        )
+        val expenses = listOf(
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 101L, folderId = 10L, title = "پاداش کارگر ۱", category = "OTHER",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 801L, amount = 80_000L, date = "1405/02/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 102L, folderId = 10L, title = "مساعده کارگر ۲", category = "OTHER",
+                scope = "INDIVIDUAL", impactType = "DEDUCTION", workerId = 802L, amount = 120_000L, date = "1405/02/02"
+            )
+        )
+
+        val workers = listOf(worker1, worker2)
+        val sumGrandDailyCost = dates.sumOf { dateStr ->
+            WageCalculator.calculateDailyBookkeeping(
+                dateStr = dateStr,
+                workers = workers,
+                attendances = attendances,
+                expenses = expenses
+            ).grandDailyCost
+        }
+
+        val summary = WageCalculator.calculateFinancialSummary(
+            workers = workers,
+            attendances = attendances,
+            expenses = expenses,
+            todayStr = "1405/02/03"
+        )
+
+        assertEquals(sumGrandDailyCost, summary.grandTotalProjectCost)
+    }
+
+    // 34. هماهنگی کامل حساب روزانه و کل پروژه (با هزینه گروهی و مثال صریح صورت‌مسئله)
+    @Test
+    fun testSumOfGrandDailyCostEqualsGrandTotalProjectCost_withGroupExpenses() {
+        // الف) مثال صریح صورت‌مسئله: یک کارگر با دستمزد 1,000,000 و هزینه گروهی 100,000 -> هر دو 900,000
+        val singleWorker = baseDailyWorker.copy(id = 810L, baseDailyWage = 1_000_000L)
+        val singleAtt = AttendanceEntity(workerId = 810L, date = "1405/02/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0)
+        val singleGroupExp = com.karyar.app.data.local.entity.ExpenseEntity(
+            id = 201L, folderId = 10L, title = "ناهار کارگاه", category = "FOOD",
+            scope = "GROUP", amount = 100_000L, date = "1405/02/01"
+        )
+
+        val singleDaily = WageCalculator.calculateDailyBookkeeping(
+            dateStr = "1405/02/01",
+            workers = listOf(singleWorker),
+            attendances = listOf(singleAtt),
+            expenses = listOf(singleGroupExp)
+        )
+        val singleSummary = WageCalculator.calculateFinancialSummary(
+            workers = listOf(singleWorker),
+            attendances = listOf(singleAtt),
+            expenses = listOf(singleGroupExp),
+            todayStr = "1405/02/01"
+        )
+
+        assertEquals(900_000L, singleDaily.grandDailyCost)
+        assertEquals(900_000L, singleSummary.grandTotalProjectCost)
+        assertEquals(singleDaily.grandDailyCost, singleSummary.grandTotalProjectCost)
+
+        // ب) سناریوی چندروزه و چندکارگره با هزینه‌های گروهی (شامل باقیمانده تقسیم بر ۳)
+        val w1 = baseDailyWorker.copy(id = 811L, baseDailyWage = 1_000_000L)
+        val w2 = baseDailyWorker.copy(id = 812L, baseDailyWage = 800_000L)
+        val w3 = baseDailyWorker.copy(id = 813L, baseDailyWage = 900_000L)
+        val workers = listOf(w1, w2, w3)
+
+        val dates = listOf("1405/02/01", "1405/02/02")
+        val attendances = listOf(
+            AttendanceEntity(workerId = 811L, date = "1405/02/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0),
+            AttendanceEntity(workerId = 812L, date = "1405/02/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0),
+            AttendanceEntity(workerId = 813L, date = "1405/02/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0),
+            AttendanceEntity(workerId = 811L, date = "1405/02/02", status = AttendanceStatus.HALF_DAY, regularHours = 4.0),
+            AttendanceEntity(workerId = 812L, date = "1405/02/02", status = AttendanceStatus.FULL_DAY, regularHours = 8.0)
+        )
+        val expenses = listOf(
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 202L, folderId = 10L, title = "سرویس روز اول", category = "TRANSIT",
+                scope = "GROUP", amount = 100_000L, date = "1405/02/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 203L, folderId = 10L, title = "ناهار روز دوم", category = "FOOD",
+                scope = "GROUP", amount = 250_000L, date = "1405/02/02"
+            )
+        )
+
+        val sumGrandDailyCost = dates.sumOf { dateStr ->
+            WageCalculator.calculateDailyBookkeeping(
+                dateStr = dateStr,
+                workers = workers,
+                attendances = attendances,
+                expenses = expenses
+            ).grandDailyCost
+        }
+        val summary = WageCalculator.calculateFinancialSummary(
+            workers = workers,
+            attendances = attendances,
+            expenses = expenses,
+            todayStr = "1405/02/02"
+        )
+
+        assertEquals(sumGrandDailyCost, summary.grandTotalProjectCost)
+    }
+
+    // 35. هماهنگی کامل حساب روزانه و کل پروژه (با روز غیبت، کسورات و بدون clamp روزانه)
+    @Test
+    fun testSumOfGrandDailyCostEqualsGrandTotalProjectCost_withAbsentDayAndDeductions() {
+        val worker1 = baseDailyWorker.copy(
+            id = 821L,
+            baseDailyWage = 600_000L,
+            accommodationAllowance = 200_000L,
+            accommodationImpact = "DEDUCTION"
+        )
+        val worker2 = baseDailyWorker.copy(
+            id = 822L,
+            baseDailyWage = 500_000L,
+            foodAllowance = 150_000L,
+            foodImpact = "DEDUCTION"
+        )
+        val workers = listOf(worker1, worker2)
+
+        // روز اول: هر دو غایب هستند -> دستمزد ۰، کسورات ۲۰۰k + ۱۵۰k = ۳۵۰k، هزینه گروهی ۵۰k -> هزینه خام روز اول = ۴۰۰,۰۰۰-
+        // روز دوم: هر دو حاضر تمام‌وقت -> دستمزد ۱,۱۰۰k، کسورات ۳۵۰k، هزینه گروهی ۱۰۰k -> هزینه خام روز دوم = ۶۵۰,۰۰۰+
+        val dates = listOf("1405/02/01", "1405/02/02")
+        val attendances = listOf(
+            AttendanceEntity(workerId = 821L, date = "1405/02/01", status = AttendanceStatus.ABSENT),
+            AttendanceEntity(workerId = 822L, date = "1405/02/01", status = AttendanceStatus.ABSENT),
+            AttendanceEntity(workerId = 821L, date = "1405/02/02", status = AttendanceStatus.FULL_DAY, regularHours = 8.0),
+            AttendanceEntity(workerId = 822L, date = "1405/02/02", status = AttendanceStatus.FULL_DAY, regularHours = 8.0)
+        )
+        val expenses = listOf(
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 301L, folderId = 10L, title = "هزینه گروهی روز غیبت", category = "OTHER",
+                scope = "GROUP", amount = 50_000L, date = "1405/02/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 302L, folderId = 10L, title = "هزینه گروهی روز کاری", category = "FOOD",
+                scope = "GROUP", amount = 100_000L, date = "1405/02/02"
+            )
+        )
+
+        val day1Bookkeeping = WageCalculator.calculateDailyBookkeeping("1405/02/01", workers, attendances, expenses)
+        val day2Bookkeeping = WageCalculator.calculateDailyBookkeeping("1405/02/02", workers, attendances, expenses)
+
+        // روز اول نباید به صفر clamp شود؛ باید مقدار خام منفی (-400,000) باشد
+        assertEquals(-400_000L, day1Bookkeeping.grandDailyCost)
+        assertEquals(650_000L, day2Bookkeeping.grandDailyCost)
+
+        val sumGrandDailyCost = day1Bookkeeping.grandDailyCost + day2Bookkeeping.grandDailyCost
+        assertEquals(250_000L, sumGrandDailyCost)
+
+        val summary = WageCalculator.calculateFinancialSummary(
+            workers = workers,
+            attendances = attendances,
+            expenses = expenses,
+            todayStr = "1405/02/02"
+        )
+
+        // جمع grandDailyCost همه روزها باید دقیقاً برابر grandTotalProjectCost باشد
+        assertEquals(sumGrandDailyCost, summary.grandTotalProjectCost)
+
+        // همچنین اگر کل پروژه منفی باشد (فقط روز اول غیبت):
+        val onlyDay1Summary = WageCalculator.calculateFinancialSummary(
+            workers = workers,
+            attendances = attendances.filter { it.date == "1405/02/01" },
+            expenses = expenses.filter { it.date == "1405/02/01" },
+            todayStr = "1405/02/01"
+        )
+        assertEquals(-400_000L, onlyDay1Summary.grandTotalProjectCost)
+        assertEquals(day1Bookkeeping.grandDailyCost, onlyDay1Summary.grandTotalProjectCost)
+    }
+
+    // 36. تفکیک هزینه‌های فردی «سایر» (OTHER) از ایاب و ذهاب بدون تغییر در مجموع کل
+    @Test
+    fun testOtherIndividualExpensesSeparatedFromTransit() {
+        val worker = baseDailyWorker.copy(
+            id = 901L,
+            baseDailyWage = 1_000_000L,
+            transitAllowance = 40_000L,
+            transitImpact = "ALLOWANCE",
+            foodAllowance = 60_000L,
+            foodImpact = "DEDUCTION"
+        )
+        val attendances = listOf(
+            AttendanceEntity(
+                workerId = 901L,
+                date = "1405/03/01",
+                status = AttendanceStatus.FULL_DAY,
+                regularHours = 8.0
+            )
+        )
+        val individualExpenses = listOf(
+            // ایاب و ذهاب افزایشی و کاهشی (با حروف کوچک و بزرگ برای تست ignoreCase)
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 401L, folderId = 1L, title = "اسنپ", category = "transit",
+                scope = "INDIVIDUAL", impactType = "allowance", workerId = 901L, amount = 30_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 402L, folderId = 1L, title = "جریمه سرویس", category = "TRANSIT",
+                scope = "INDIVIDUAL", impactType = "DEDUCTION", workerId = 901L, amount = 15_000L, date = "1405/03/01"
+            ),
+            // خوراک، مسکن و درمان
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 403L, folderId = 1L, title = "صبحانه", category = "food",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 901L, amount = 25_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 404L, folderId = 1L, title = "اجاره اتاق", category = "AcCoMmOdAtIoN",
+                scope = "INDIVIDUAL", impactType = "deduction", workerId = 901L, amount = 80_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 405L, folderId = 1L, title = "دارو", category = "Medical",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 901L, amount = 50_000L, date = "1405/03/01"
+            ),
+            // هزینه‌های فردی OTHER (هم افزایشی و هم کاهشی) + یک دسته سفارشی متفرقه
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 406L, folderId = 1L, title = "پاداش ویژه", category = "OTHER",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 901L, amount = 120_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 407L, folderId = 1L, title = "خرید ابزار شخصی", category = "other",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 901L, amount = 30_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 408L, folderId = 1L, title = "مساعده نقدی", category = "OTHER",
+                scope = "INDIVIDUAL", impactType = "DEDUCTION", workerId = 901L, amount = 200_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 409L, folderId = 1L, title = "خسارت ابزار", category = "misc_custom",
+                scope = "INDIVIDUAL", impactType = "deduction", workerId = 901L, amount = 45_000L, date = "1405/03/01"
+            )
+        )
+
+        val perf = WageCalculator.calculateWorkerPerformance(
+            worker = worker,
+            attendances = attendances,
+            individualExpenses = individualExpenses
+        )
+
+        // ۱. بررسی تفکیک دقیق دسته‌ها (به‌ویژه عدم قاطی شدن OTHER با ایاب و ذهاب)
+        // ایاب و ذهاب افزایشی: ۴۰,۰۰۰ (پروفایل روزانه) + ۳۰,۰۰۰ (هزینه فردی) = ۷۰,۰۰۰
+        assertEquals(70_000L, perf.transitAllowanceTotal)
+        // ایاب و ذهاب کاهشی: فقط ۱۵,۰۰۰
+        assertEquals(15_000L, perf.transitDeductionTotal)
+
+        // خوراک، مسکن، درمان
+        assertEquals(25_000L, perf.foodAllowanceTotal)
+        assertEquals(60_000L, perf.foodDeductionTotal)
+        assertEquals(0L, perf.accommodationAllowanceTotal)
+        assertEquals(80_000L, perf.accommodationDeductionTotal)
+        assertEquals(50_000L, perf.medicalAllowanceTotal)
+        assertEquals(0L, perf.medicalDeductionTotal)
+
+        // سایر (OTHER و دسته‌های متفرقه):
+        // افزایشی: ۱۲۰,۰۰۰ + ۳۰,۰۰۰ = ۱۵۰,۰۰۰
+        assertEquals(150_000L, perf.otherAllowanceTotal)
+        // کاهشی: ۲۰۰,۰۰۰ + ۴۵,۰۰۰ = ۲۴۵,۰۰۰
+        assertEquals(245_000L, perf.otherDeductionTotal)
+
+        // ۲. بررسی عدم تغییر مجموع کل مزایا، کسورات و خالص دریافتی
+        // کل مزایا: 70,000 + 25,000 + 0 + 50,000 + 150,000 = 295,000
+        assertEquals(295_000L, perf.totalAllowances)
+        // کل کسورات: 15,000 + 60,000 + 80,000 + 0 + 245,000 = 400,000
+        assertEquals(400_000L, perf.totalDeductions)
+        // خالص دریافتی: 1,000,000 + 295,000 - 400,000 = 895,000
+        assertEquals(895_000L, perf.netPayout)
+        assertEquals(895_000L, perf.rawNetPayout)
+    }
+
+    @Test
+    fun testCustomDay_zeroDailyWage_doesNotFallbackToWorkerProfile() {
+        val worker = baseDailyWorker.copy(baseDailyWage = 1_200_000L)
+        val attFullZero = AttendanceEntity(
+            workerId = worker.id,
+            date = "1405/04/01",
+            status = AttendanceStatus.FULL_DAY,
+            dailyWage = 0L,
+            hasCustomAllowances = true
+        )
+        val attHalfZero = AttendanceEntity(
+            workerId = worker.id,
+            date = "1405/04/02",
+            status = AttendanceStatus.HALF_DAY,
+            dailyWage = 0L,
+            hasCustomAllowances = true
+        )
+
+        val resFull = WageCalculator.calculateDay(worker, attFullZero)
+        val resHalf = WageCalculator.calculateDay(worker, attHalfZero)
+
+        assertTrue(resFull.isWorkingDay)
+        assertEquals(0L, resFull.baseWage)
+        assertEquals(0L, resFull.netPayout)
+
+        assertTrue(resHalf.isWorkingDay)
+        assertEquals(0L, resHalf.baseWage)
+        assertEquals(0L, resHalf.netPayout)
+    }
+
+    @Test
+    fun testCustomDay_zeroHourlyRateOrHours_doesNotFallbackToWorkerProfile() {
+        val worker = baseHourlyWorker.copy(
+            isHourlyEnabled = true,
+            hourlyWageRate = 180_000L,
+            baseHourlyWage = 180_000L,
+            hourlyHours = 8.0
+        )
+        val attZeroRate = AttendanceEntity(
+            workerId = worker.id,
+            date = "1405/04/01",
+            status = AttendanceStatus.HOURLY,
+            hourlyHours = 6.0,
+            hourlyWageRate = 0L,
+            hourlyWage = 0L,
+            hasCustomAllowances = true
+        )
+        val attZeroHours = AttendanceEntity(
+            workerId = worker.id,
+            date = "1405/04/02",
+            status = AttendanceStatus.HOURLY,
+            hourlyHours = 0.0,
+            hourlyWageRate = 180_000L,
+            hourlyWage = 180_000L,
+            hasCustomAllowances = true
+        )
+
+        val resZeroRate = WageCalculator.calculateDay(worker, attZeroRate)
+        val resZeroHours = WageCalculator.calculateDay(worker, attZeroHours)
+
+        assertEquals(0L, resZeroRate.hourlyPay)
+        assertEquals(0L, resZeroRate.netPayout)
+        assertEquals(0L, resZeroHours.hourlyPay)
+        assertEquals(0L, resZeroHours.netPayout)
+    }
+
+    @Test
+    fun testCustomDay_zeroOvertimeRateOrHours_doesNotFallbackToWorkerProfile() {
+        val worker = baseDailyWorker.copy(
+            baseDailyWage = 1_000_000L,
+            isOvertimeEnabled = true,
+            overtimeRate = 200_000L,
+            overtimeHours = 3.0
+        )
+        val attZeroOtRate = AttendanceEntity(
+            workerId = worker.id,
+            date = "1405/04/01",
+            status = AttendanceStatus.FULL_DAY,
+            dailyWage = 1_000_000L,
+            overtimeHours = 3.0,
+            overtimeRate = 0L,
+            hasCustomAllowances = true
+        )
+        val attZeroOtHours = AttendanceEntity(
+            workerId = worker.id,
+            date = "1405/04/02",
+            status = AttendanceStatus.FULL_DAY,
+            dailyWage = 1_000_000L,
+            overtimeHours = 0.0,
+            overtimeRate = 200_000L,
+            hasCustomAllowances = true
+        )
+
+        val resZeroOtRate = WageCalculator.calculateDay(worker, attZeroOtRate)
+        val resZeroOtHours = WageCalculator.calculateDay(worker, attZeroOtHours)
+
+        assertEquals(0L, resZeroOtRate.overtimePay)
+        assertEquals(1_000_000L, resZeroOtRate.netPayout)
+        assertEquals(0L, resZeroOtHours.overtimePay)
+        assertEquals(1_000_000L, resZeroOtHours.netPayout)
     }
 }

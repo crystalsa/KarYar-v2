@@ -76,7 +76,7 @@ object ExcelExportUtil {
                 // Section 1: Performance Summary (تسویه حساب و کارکرد پرسنل)
                 // -------------------------------------------------------------
                 writer.append("=== خلاصه کارکرد و تسویه حساب هر کارگر ===\n")
-                writer.append("ردیف,شناسه کارگر,نام کارگر,شغل / تخصص,تفکیک وضعیت کارکرد,تعداد شیفت (روز),ساعات عادی (ساعت),ساعت کار ساعتی (ساعت),اضافه کاری (ساعت),دستمزد پایه (تومان),دستمزد ساعتی (تومان),اضافه کاری (تومان),کمک‌هزینه‌ها (تومان),کسورات (تومان),سهم هزینه‌های گروهی (تومان),خالص دریافتی نهایی (تومان)\n")
+                writer.append("ردیف,شناسه کارگر,نام کارگر,شغل / تخصص,تفکیک وضعیت کارکرد,تعداد شیفت (روز),ساعات عادی (ساعت),ساعت کار ساعتی (ساعت),اضافه کاری (ساعت),دستمزد پایه (تومان),دستمزد ساعتی (تومان),اضافه کاری (تومان),کمک‌هزینه‌ها (تومان),سایر مزایا (تومان),کسورات (تومان),سایر کسورات (تومان),سهم هزینه‌های گروهی (تومان),خالص دریافتی نهایی (تومان),وضعیت بدهی (تومان)\n")
 
                 for ((index, p) in performances.withIndex()) {
                     writer.append("${index + 1},")
@@ -92,9 +92,14 @@ object ExcelExportUtil {
                     writer.append("${p.hourlyPayTotal},")
                     writer.append("${p.overtimePayTotal},")
                     writer.append("${p.totalAllowances},")
+                    writer.append("${p.otherAllowanceTotal},")
                     writer.append("${p.totalDeductions},")
+                    writer.append("${p.otherDeductionTotal},")
                     writer.append("${p.groupExpenseShare},")
-                    writer.append("${p.netPayout}\n")
+                    val netCol = if (p.debtAmount > 0L) escapeCsv("بدهکار: ${Formatters.formatCurrency(p.debtAmount)}") else "${p.netPayout}"
+                    val debtCol = if (p.debtAmount > 0L) escapeCsv("بدهکار: ${Formatters.formatCurrency(p.debtAmount)}") else "۰ تومان"
+                    writer.append("$netCol,")
+                    writer.append("$debtCol\n")
                 }
                 writer.append("\n")
 
@@ -173,6 +178,7 @@ object ExcelExportUtil {
                     writer.append("مجموع اضافه کاری و ساعتی (تومان),${analytics.totalOvertimePaid + analytics.totalHourlyPaid}\n")
                     writer.append("کل هزینه‌های جانبی کارگاه (تومان),${analytics.grandTotalExpenses}\n")
                     writer.append("مجموع کل مخارج و هزینه‌های پروژه (تومان),${analytics.grandTotalProjectCost}\n")
+                    writer.append("مجموع بدهی کارگران (تومان),${analytics.totalWorkerDebt}\n")
                 }
 
                 writer.flush()

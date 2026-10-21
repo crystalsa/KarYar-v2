@@ -318,10 +318,10 @@ fun DateFolderCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = Formatters.formatCurrency(folderTotalDayPayout),
+                    text = if (folderTotalDayPayout < 0L) "بدهکار: ${Formatters.formatCurrency(-folderTotalDayPayout)}" else Formatters.formatCurrency(folderTotalDayPayout),
                     fontSize = 12.5.sp,
                     fontWeight = FontWeight.Bold,
-                    color = EmeraldAccent
+                    color = if (folderTotalDayPayout < 0L) RoseAccent else EmeraldAccent
                 )
             }
         }

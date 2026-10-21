@@ -5,6 +5,12 @@ on:
     branches:
       - main
       - master
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/**.md'
+      - 'RELEASE_CHECKLIST.md'
+      - 'LICENSE'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -112,7 +118,7 @@ jobs:
             echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
           else
             echo "has_release_keystore=false" >> $GITHUB_OUTPUT
-            echo "::notice::KEYSTORE_BASE64 is not configured; using standard signing key for build."
+            echo "::warning title=کلید رسمی انتشار یافت نشد::متغیر KEYSTORE_BASE64 در Secrets تنظیم نشده است. APK با کلید موقت بیلد می‌شود و به منظور جلوگیری از تداخل امضا و از دست رفتن داده‌های کاربران، ریلیز عمومی در گیت‌هاب ایجاد نخواهد شد (فقط Artifact داخلی ذخیره می‌گردد)."
           fi
 
       - name: Determine Version Info (Auto-Increment)
@@ -238,8 +244,17 @@ jobs:
           path: artifacts/KarYar-Latest.apk
           retention-days: 30
 
+      - name: Notify No Public Release Due to Missing Keystore
+        if: steps.prep_signing.outputs.has_release_keystore != 'true'
+        run: |
+          echo "=========================================================================================="
+          echo "⚠️ هشدار: متغیر KEYSTORE_BASE64 در GitHub Secrets تنظیم نشده است."
+          echo "به منظور حفظ یکپارچگی داده‌های کاربران و جلوگیری از خطای نصب نسخه جدید روی نسخه قبلی (تغییر امضا)،"
+          echo "هیچ ریلیز عمومی در گیت‌هاب ایجاد نمی‌شود. فایل APK صرفاً در بخش Artifacts آپلود شد."
+          echo "=========================================================================================="
+
       - name: Create GitHub Release
-        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != ''
+        if: steps.prep_signing.outputs.has_release_keystore == 'true' && steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && (github.event_name != 'workflow_dispatch' || inputs.create_release == true)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}
@@ -249,7 +264,7 @@ jobs:
             ### 📱 فایل نصبی رسمی اندروید (KarYar APK)
             - **نسخه (Version Name):** `${{ steps.version_info.outputs.version_name }}`
             - **کد نسخه (Version Code):** `${{ steps.version_info.outputs.version_code }}`
-            - **وضعیت امضا:** ${{ steps.prep_signing.outputs.has_release_keystore == 'true' && 'امضاشده با کلید اختصاصی انتشار (Release Keystore)' || 'امضاشده با کلید استاندارد بیلد' }}
+            - **وضعیت امضا:** امضاشده با کلید اختصاصی انتشار (Release Keystore)
             
             📥 جهت دانلود و نصب روی گوشی اندروید، فایل `KarYar-${{ steps.version_info.outputs.tag }}.apk` را از بخش Assets در زیر دانلود نمایید.
           files: |
@@ -262,8 +277,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prune Old Releases (Keep only latest 5)
-        if: steps.version_info.outputs.is_release == 'true'
+      - name: Prune Old Releases (Keep only latest 5, preserving git tags)
+        if: steps.prep_signing.outputs.has_release_keystore == 'true' && steps.version_info.outputs.is_release == 'true'
         run: |
           echo "Checking existing releases to keep only the 5 most recent versions..."
           # gh release list returns releases ordered newest first.
@@ -273,10 +288,10 @@ jobs:
             echo "Found older releases to prune (keeping latest 5):"
             echo "$OLD_RELEASES"
             for old_tag in $OLD_RELEASES; do
-              echo "Pruning old release and tag: $old_tag"
-              gh release delete "$old_tag" --cleanup-tag --yes 2>/dev/null || gh release delete "$old_tag" --yes 2>/dev/null || echo "Could not delete $old_tag"
+              echo "Pruning old release (preserving git tag): $old_tag"
+              gh release delete "$old_tag" --yes 2>/dev/null || echo "Could not delete release $old_tag"
             done
-            echo "Successfully pruned older releases. Exactly the 5 latest releases are kept."
+            echo "Successfully pruned older releases. Git tags are preserved and the 5 latest releases are kept."
           else
             echo "Total releases count is 5 or fewer. No pruning needed."
           fi
