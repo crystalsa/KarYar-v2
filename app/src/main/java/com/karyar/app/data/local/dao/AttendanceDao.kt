@@ -106,6 +106,21 @@ interface AttendanceDao {
         oldMedicalImpact: String
     )
 
+    @Query(
+        """
+        UPDATE OR IGNORE attendance
+        SET date = :newDate, epochDay = :newEpochDay, dateFolderId = :dateFolderId
+        WHERE dateFolderId = :dateFolderId OR (folderId = :folderId AND date = :oldDate)
+        """
+    )
+    suspend fun updateDateForDateFolder(
+        folderId: Long,
+        dateFolderId: Long,
+        oldDate: String,
+        newDate: String,
+        newEpochDay: Long
+    )
+
     @Query("DELETE FROM attendance")
     suspend fun clearAll()
 }

@@ -171,7 +171,7 @@ fun WorkersScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     val sortedDateFolders = remember(dateFolders) {
-                        dateFolders.sortedWith(compareBy({ it.date }, { it.id }))
+                        dateFolders.sortedWith(compareBy({ JalaliCalendar.toEpochDay(it.date) }, { it.id }))
                     }
 
                     if (sortedDateFolders.isEmpty()) {

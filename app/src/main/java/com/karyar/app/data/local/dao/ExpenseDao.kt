@@ -25,6 +25,9 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE folderId = :folderId AND workerId = :workerId")
     suspend fun getExpensesForWorkerSync(folderId: Long, workerId: Long): List<ExpenseEntity>
 
+    @Query("SELECT * FROM expenses WHERE folderId = :folderId AND date = :date ORDER BY timestamp DESC, id DESC")
+    fun getExpensesForDateInFolder(folderId: Long, date: String): Flow<List<ExpenseEntity>>
+
     @Query("SELECT * FROM expenses WHERE folderId = :folderId AND date = :date")
     suspend fun getExpensesForDateInFolderSync(folderId: Long, date: String): List<ExpenseEntity>
 
@@ -42,6 +45,9 @@ interface ExpenseDao {
 
     @Query("DELETE FROM expenses WHERE folderId = :folderId")
     suspend fun deleteExpensesByFolder(folderId: Long)
+
+    @Query("DELETE FROM expenses WHERE workerId = :workerId")
+    suspend fun deleteExpensesForWorker(workerId: Long)
 
     @Query("UPDATE expenses SET workerName = :newName WHERE workerId = :workerId")
     suspend fun updateWorkerName(workerId: Long, newName: String)

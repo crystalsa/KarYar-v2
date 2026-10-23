@@ -62,7 +62,9 @@ fun DayFinancialReportCard(
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val dayWorkers = allWorkers
+    val workersById = allWorkers.associateBy { it.id }
+    val dayAttendances = attendanceList.filter { it.date == targetDayFolder.date }
+
     var dayPresentCount = 0
     var dayHalfDayCount = 0
     var dayHourlyCount = 0
@@ -83,84 +85,40 @@ fun DayFinancialReportCard(
     var medicalAllowance = 0L
     var medicalDeduction = 0L
 
-    for (worker in dayWorkers) {
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == targetDayFolder.date }
-        val isHourly = WageCalculator.isHourly(worker, att)
+    for (att in dayAttendances) {
+        val worker = workersById[att.workerId] ?: continue
+        val res = WageCalculator.calculateDay(worker, att)
         val isAbsent = WageCalculator.isAbsent(worker, att)
+        val isHourly = WageCalculator.isHourly(worker, att)
         val isHalfDay = WageCalculator.isHalfDay(worker, att)
         val isFullDay = WageCalculator.isFullDay(worker, att)
 
         when {
             isAbsent -> dayAbsentCount++
-            isHourly -> {
-                dayHourlyCount++
-                val hHours = if (att != null && att.hourlyHours > 0) att.hourlyHours else (if (worker.hourlyHours > 0) worker.hourlyHours else 0.0)
-                val hRate = if (att != null && att.hourlyWageRate > 0) att.hourlyWageRate else (if (worker.hourlyWageRate > 0) worker.hourlyWageRate else worker.baseHourlyWage)
-                if (hHours > 0 && hRate > 0) {
-                    dayHourlyHours += hHours
-                    dayHourlyPay += (hHours * hRate).toLong()
-                }
-            }
-            isHalfDay -> {
-                dayHalfDayCount++
-                val wage = if (att?.dailyWage != null && att.dailyWage > 0) att.dailyWage else worker.baseDailyWage / 2
-                dayBaseWages += wage
-            }
-            isFullDay -> {
-                dayPresentCount++
-                val wage = if (att?.dailyWage != null && att.dailyWage > 0) att.dailyWage else worker.baseDailyWage
-                dayBaseWages += wage
-            }
-            else -> {}
+            isHourly -> dayHourlyCount++
+            isHalfDay -> dayHalfDayCount++
+            isFullDay -> dayPresentCount++
         }
 
-        if (!isAbsent) {
-            val otHours = if (att != null && att.overtimeHours > 0) att.overtimeHours else (if (worker.isOvertimeEnabled) worker.overtimeHours else 0.0)
-            val otRate = if (att != null && att.overtimeRate > 0) att.overtimeRate else worker.overtimeRate
-            if (otHours > 0) {
-                dayOvertimeHours += otHours
-                val pay = if (otRate > 0) (otHours * otRate).toLong()
-                else if (att != null && att.hourlyWage > 0) (otHours * att.hourlyWage * 1.4).toLong()
-                else 0L
-                dayOvertimePay += pay
-            }
-
-            // ایاب و ذهاب
-            if (worker.transitAllowance > 0) {
-                if (worker.transitImpact == "ALLOWANCE") {
-                    transitAllowance += worker.transitAllowance
-                } else {
-                    transitDeduction += worker.transitAllowance
-                }
-            }
-
-            // خوراک و ناهار
-            if (worker.foodAllowance > 0) {
-                if (worker.foodImpact == "ALLOWANCE") {
-                    foodAllowance += worker.foodAllowance
-                } else {
-                    foodDeduction += worker.foodAllowance
-                }
-            }
-
-            // اسکان و مسکن
-            if (worker.accommodationAllowance > 0) {
-                if (worker.accommodationImpact == "ALLOWANCE") {
-                    accommodationAllowance += worker.accommodationAllowance
-                } else {
-                    accommodationDeduction += worker.accommodationAllowance
-                }
-            }
-
-            // بیمه و درمان
-            if (worker.medicalAllowance > 0) {
-                if (worker.medicalImpact == "ALLOWANCE") {
-                    medicalAllowance += worker.medicalAllowance
-                } else {
-                    medicalDeduction += worker.medicalAllowance
-                }
-            }
+        dayBaseWages += res.baseWage
+        dayHourlyPay += res.hourlyPay
+        if (res.hourlyPay > 0L) {
+            dayHourlyHours += res.hourlyHours
         }
+        dayOvertimePay += res.overtimePay
+        if (res.overtimePay > 0L) {
+            dayOvertimeHours += res.overtimeHours
+        }
+
+        // مزایا و کسورات تفکیکی روز مطابق WageCalculator.calculateDay
+        transitAllowance += res.transitAllowance
+        transitDeduction += res.transitDeduction
+        foodAllowance += res.foodAllowance
+        foodDeduction += res.foodDeduction
+        accommodationAllowance += res.accommodationAllowance
+        accommodationDeduction += res.accommodationDeduction
+        medicalAllowance += res.medicalAllowance
+        medicalDeduction += res.medicalDeduction
     }
 
     val dailyBookkeeping = WageCalculator.calculateDailyBookkeeping(

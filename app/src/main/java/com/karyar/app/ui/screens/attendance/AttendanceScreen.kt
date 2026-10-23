@@ -87,6 +87,7 @@ fun AttendanceScreen(
     val selectedDateFolder by viewModel.selectedDateFolder.collectAsState()
     val allWorkers by viewModel.workers.collectAsState()
     val attendanceList by viewModel.attendanceList.collectAsState()
+    val expenses by viewModel.expenses.collectAsState()
 
     var isAddingWorker by remember { mutableStateOf(false) }
     var showMustCreateDayDialog by remember { mutableStateOf(false) }
@@ -190,7 +191,7 @@ fun AttendanceScreen(
 
                     // Date folder horizontal chips (از راست به چپ)
                     val sortedDateFolders = remember(dateFolders) {
-                        dateFolders.sortedWith(compareBy({ it.date }, { it.id }))
+                        dateFolders.sortedWith(compareBy({ com.karyar.app.util.JalaliCalendar.toEpochDay(it.date) }, { it.id }))
                     }
 
                     if (sortedDateFolders.isEmpty()) {
@@ -515,12 +516,14 @@ fun AttendanceScreen(
 
     if (deletingDateFolder != null) {
         val dfToDelete = deletingDateFolder!!
-        val initialDayImpact = remember(dfToDelete, allWorkers, attendanceList) {
+        val initialDayImpact = remember(dfToDelete, allWorkers, attendanceList, expenses) {
             val dayAtts = attendanceList.filter { it.dateFolderId == dfToDelete.id || it.date == dfToDelete.date }
+            val dayExps = expenses.filter { it.date == dfToDelete.date }
             WageCalculator.calculateDateFolderDeletionImpact(
                 dateStr = dfToDelete.date,
                 workers = allWorkers,
-                dayAttendances = dayAtts
+                dayAttendances = dayAtts,
+                dayExpenses = dayExps
             )
         }
         var dayDeletionImpact by remember(dfToDelete.id) { mutableStateOf(initialDayImpact) }
@@ -647,11 +650,13 @@ fun AttendanceScreen(
 
     if (deletingWorkerFromAttendance != null) {
         val workerToDelete = deletingWorkerFromAttendance!!
-        val initialWorkerImpact = remember(workerToDelete, attendanceList) {
+        val initialWorkerImpact = remember(workerToDelete, attendanceList, expenses) {
             val workerAtts = attendanceList.filter { it.workerId == workerToDelete.id }
+            val workerExps = expenses.filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) && it.workerId == workerToDelete.id }
             WageCalculator.calculateWorkerDeletionImpact(
                 worker = workerToDelete,
-                workerAttendances = workerAtts
+                workerAttendances = workerAtts,
+                workerIndividualExpenses = workerExps
             )
         }
         var workerDeletionImpact by remember(workerToDelete.id) { mutableStateOf(initialWorkerImpact) }

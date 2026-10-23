@@ -40,14 +40,33 @@ class WorkerRepository(
     fun getWorkersByFolder(folderId: Long): Flow<List<WorkerEntity>> = workerDao.getWorkersByFolder(folderId)
     fun getWorkersByDateFolder(dateFolderId: Long): Flow<List<WorkerEntity>> = workerDao.getWorkersByDateFolder(dateFolderId)
     fun getAttendanceByFolder(folderId: Long): Flow<List<AttendanceEntity>> = attendanceDao.getAttendanceByFolder(folderId)
+    fun getAttendanceForDateInFolder(folderId: Long, date: String): Flow<List<AttendanceEntity>> = attendanceDao.getAttendanceForDateInFolder(folderId, date)
+    suspend fun getAttendanceForWorkerAndDate(workerId: Long, date: String): AttendanceEntity? = attendanceDao.getAttendanceForWorkerAndDate(workerId, date)
     fun getExpensesByFolder(folderId: Long): Flow<List<ExpenseEntity>> = expenseDao.getExpensesByFolder(folderId)
+    fun getExpensesForDateInFolder(folderId: Long, date: String): Flow<List<ExpenseEntity>> = expenseDao.getExpensesForDateInFolder(folderId, date)
 
     suspend fun insertFolder(folder: WorkplaceFolderEntity): Long = folderDao.insertFolder(folder)
     suspend fun updateFolder(folder: WorkplaceFolderEntity) = folderDao.updateFolder(folder)
     suspend fun getFolderById(folderId: Long): WorkplaceFolderEntity? = folderDao.getFolderById(folderId)
 
-    suspend fun insertDateFolder(dateFolder: DateFolderEntity): Long = dateFolderDao.insertDateFolder(dateFolder)
-    suspend fun updateDateFolder(dateFolder: DateFolderEntity) = dateFolderDao.updateDateFolder(dateFolder)
+    suspend fun insertDateFolder(dateFolder: DateFolderEntity): Long = dateFolderDao.insertDateFolder(
+        dateFolder.copy(epochDay = JalaliCalendar.toEpochDay(dateFolder.date))
+    )
+    suspend fun updateDateFolder(dateFolder: DateFolderEntity) = database.withTransaction {
+        val oldDateFolder = dateFolderDao.getDateFolderById(dateFolder.id)
+        val newEpochDay = JalaliCalendar.toEpochDay(dateFolder.date)
+        val updatedFolder = dateFolder.copy(epochDay = newEpochDay)
+        dateFolderDao.updateDateFolder(updatedFolder)
+        if (oldDateFolder != null && oldDateFolder.date != dateFolder.date) {
+            attendanceDao.updateDateForDateFolder(
+                folderId = dateFolder.folderId,
+                dateFolderId = dateFolder.id,
+                oldDate = oldDateFolder.date,
+                newDate = dateFolder.date,
+                newEpochDay = newEpochDay
+            )
+        }
+    }
     suspend fun getDateFolderByDate(folderId: Long, date: String): DateFolderEntity? = dateFolderDao.getDateFolderByDate(folderId, date)
     suspend fun deleteDateFolder(dateFolder: DateFolderEntity) = database.withTransaction {
         attendanceDao.deleteAttendanceForDateFolder(
@@ -143,15 +162,17 @@ class WorkerRepository(
 
         val dateFolders = dateFolderDao.getDateFoldersByFolderSync(folder.id)
         val dateFolderIdMap = mutableMapOf<Long, Long>()
+        val dateFolderByDateMap = mutableMapOf<String, Long>()
         for (df in dateFolders) {
             val newDfId = dateFolderDao.insertDateFolder(df.copy(id = 0, folderId = newFolderId))
             dateFolderIdMap[df.id] = newDfId
+            dateFolderByDateMap[df.date] = newDfId
         }
 
         val attendances = attendanceDao.getAttendanceByFolderSync(folder.id)
         for (att in attendances) {
             val mappedWorkerId = workerIdMap[att.workerId] ?: continue
-            val mappedDateFolderId = dateFolderIdMap[att.dateFolderId] ?: 0L
+            val mappedDateFolderId = dateFolderIdMap[att.dateFolderId] ?: dateFolderByDateMap[att.date] ?: 0L
             attendanceDao.insertAttendance(
                 att.copy(
                     id = 0,
@@ -186,28 +207,33 @@ class WorkerRepository(
         title: String = "روز کاری",
         notes: String = ""
     ): Long = database.withTransaction {
-        val newDfId = dateFolderDao.insertDateFolder(
-            DateFolderEntity(
-                folderId = folderId,
-                date = date,
-                dayOfWeek = dayOfWeek,
-                title = title,
-                notes = notes,
-                epochDay = JalaliCalendar.toEpochDay(date)
+        val existingDf = dateFolderDao.getDateFolderByDate(folderId, date)
+        val targetDfId = if (existingDf != null) {
+            existingDf.id
+        } else {
+            dateFolderDao.insertDateFolder(
+                DateFolderEntity(
+                    folderId = folderId,
+                    date = date,
+                    dayOfWeek = dayOfWeek,
+                    title = title,
+                    notes = notes,
+                    epochDay = JalaliCalendar.toEpochDay(date)
+                )
             )
-        )
+        }
         val activeWorkers = workerDao.getWorkersByFolderSync(folderId).filter { it.isActive }
         for (w in activeWorkers) {
             attendanceDao.insertAttendance(
                 WageCalculator.defaultAttendanceFor(
                     worker = w,
                     date = date,
-                    dateFolderId = newDfId,
+                    dateFolderId = targetDfId,
                     folderId = folderId
                 )
             )
         }
-        newDfId
+        targetDfId
     }
 
     suspend fun duplicateWorker(
@@ -259,7 +285,10 @@ class WorkerRepository(
         expenseDao.updateWorkerName(worker.id, worker.name)
     }
     suspend fun deactivateWorker(worker: WorkerEntity) = updateWorker(worker.copy(isActive = false))
-    suspend fun deleteWorker(worker: WorkerEntity) = workerDao.deleteWorker(worker)
+    suspend fun deleteWorker(worker: WorkerEntity) = database.withTransaction {
+        expenseDao.deleteExpensesForWorker(worker.id)
+        workerDao.deleteWorker(worker)
+    }
 
     suspend fun insertAttendance(attendance: AttendanceEntity): Long = attendanceDao.upsertAttendance(attendance)
     suspend fun updateAttendance(attendance: AttendanceEntity) = attendanceDao.updateAttendance(attendance)
@@ -288,8 +317,8 @@ class WorkerRepository(
         notes: String = "پروژه احداث مجتمع تجاری مسکونی ۲۴ طبقه"
     ): Long = database.withTransaction {
         val todayJalali = JalaliCalendar.todayString()
-        val yesterdayJalali = JalaliCalendar.fromTimestamp(System.currentTimeMillis() - 86400000L).format()
-        val twoDaysAgoJalali = JalaliCalendar.fromTimestamp(System.currentTimeMillis() - 172800000L).format()
+        val yesterdayJalali = JalaliCalendar.previousDay(todayJalali).first
+        val twoDaysAgoJalali = JalaliCalendar.previousDay(yesterdayJalali).first
 
         // ==========================================
         // WORKPLACE

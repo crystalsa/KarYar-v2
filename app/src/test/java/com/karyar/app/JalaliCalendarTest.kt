@@ -129,4 +129,68 @@ class JalaliCalendarTest {
         assertEquals("1403/05/12", JalaliCalendar.toEnglishDigits("۱۴۰۳/۰۵/۱۲"))
         assertEquals("۰۱۲۳۴۵۶۷۸۹", JalaliCalendar.toPersianDigits("0123456789"))
     }
+
+    @Test
+    fun testTimezoneAndMidnightDriftStability() {
+        val originalTz = java.util.TimeZone.getDefault()
+        val timeZonesToTest = listOf(
+            "UTC",
+            "Asia/Tehran",
+            "America/Los_Angeles",
+            "America/New_York",
+            "Europe/London",
+            "Asia/Tokyo",
+            "Pacific/Auckland",
+            "Pacific/Honolulu"
+        )
+        // Known dates with their exact Persian day of week and Gregorian equivalent:
+        // 1403/01/01 = 2024-03-20 (Wednesday -> چهارشنبه, epochDay = 19802)
+        // 1403/06/31 = 2024-09-21 (Saturday -> شنبه, epochDay = 19987)
+        // 1403/07/01 = 2024-09-22 (Sunday -> یکشنبه, epochDay = 19988)
+        // 1402/12/29 = 2024-03-19 (Tuesday -> سه‌شنبه, epochDay = 19801)
+        val expectedSamples = listOf(
+            Triple("1403/01/01", "چهارشنبه", 19802L),
+            Triple("1403/06/31", "شنبه", 19987L),
+            Triple("1403/07/01", "یکشنبه", 19988L),
+            Triple("1402/12/29", "سه‌شنبه", 19801L)
+        )
+
+        // Timestamp at 2024-03-20 00:15:00 Asia/Tehran (which is 2024-03-19 20:45:00 UTC)
+        // In Iran timezone it is already 1403/01/01 regardless of device default timezone.
+        val tehranJustAfterMidnightMillis = 1710881100000L // 2024-03-19T20:45:00Z = 2024-03-20T00:15:00+03:30
+
+        try {
+            for (tzId in timeZonesToTest) {
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(tzId))
+
+                for ((dateStr, expectedDow, expectedEpochDay) in expectedSamples) {
+                    assertEquals(
+                        "getDayOfWeek drift in timezone $tzId for $dateStr",
+                        expectedDow,
+                        JalaliCalendar.getDayOfWeek(dateStr)
+                    )
+                    assertEquals(
+                        "toEpochDay drift in timezone $tzId for $dateStr",
+                        expectedEpochDay,
+                        JalaliCalendar.toEpochDay(dateStr)
+                    )
+                    assertEquals(
+                        "fromEpochDay drift in timezone $tzId for $dateStr",
+                        dateStr,
+                        JalaliCalendar.fromEpochDay(expectedEpochDay).format()
+                    )
+                }
+
+                // Verify fromTimestamp defaults to Asia/Tehran regardless of JVM default TimeZone
+                assertEquals(
+                    "fromTimestamp should use Asia/Tehran even when device is in $tzId",
+                    "1403/01/01",
+                    JalaliCalendar.fromTimestamp(tehranJustAfterMidnightMillis).format()
+                )
+            }
+        } finally {
+            java.util.TimeZone.setDefault(originalTz)
+        }
+    }
 }
+

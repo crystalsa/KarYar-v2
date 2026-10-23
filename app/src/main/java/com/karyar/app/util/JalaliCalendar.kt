@@ -1,12 +1,18 @@
 package com.karyar.app.util
 
 import java.util.Calendar
-import java.util.Date
+import java.util.TimeZone
 
 /**
  * Utility for Persian / Jalali (شمسی) date calculations and formatting.
  */
 object JalaliCalendar {
+
+    private const val MILLIS_PER_DAY = 86_400_000L
+    private const val NOON_OFFSET_MILLIS = 12L * 3600_000L // 12:00:00 UTC
+
+    val TEHRAN_TIME_ZONE: TimeZone = TimeZone.getTimeZone("Asia/Tehran")
+    val UTC_TIME_ZONE: TimeZone = TimeZone.getTimeZone("UTC")
 
     private val PERSIAN_MONTH_NAMES = arrayOf(
         "فروردین", "اردیبهشت", "خرداد",
@@ -31,10 +37,10 @@ object JalaliCalendar {
     }
 
     /**
-     * Converts Gregorian timestamp (millis) to Jalali Date
+     * Converts Gregorian timestamp (millis) to Jalali Date using standard Iran TimeZone (Asia/Tehran) by default.
      */
-    fun fromTimestamp(millis: Long): JalaliDate {
-        val cal = Calendar.getInstance()
+    fun fromTimestamp(millis: Long, timeZone: TimeZone = TEHRAN_TIME_ZONE): JalaliDate {
+        val cal = Calendar.getInstance(timeZone)
         cal.timeInMillis = millis
         return gregorianToJalali(
             cal.get(Calendar.YEAR),
@@ -44,10 +50,10 @@ object JalaliCalendar {
     }
 
     /**
-     * Returns today's Jalali date
+     * Returns today's Jalali date using standard Iran TimeZone (Asia/Tehran) by default.
      */
-    fun today(): JalaliDate {
-        return fromTimestamp(System.currentTimeMillis())
+    fun today(timeZone: TimeZone = TEHRAN_TIME_ZONE): JalaliDate {
+        return fromTimestamp(System.currentTimeMillis(), timeZone)
     }
 
     fun todayString(): String = today().format()
@@ -154,7 +160,7 @@ object JalaliCalendar {
     }
 
     fun getDayOfWeek(millis: Long = System.currentTimeMillis()): String {
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance(TEHRAN_TIME_ZONE)
         cal.timeInMillis = millis
         return getDayOfWeekPersian(cal.get(Calendar.DAY_OF_WEEK))
     }
@@ -207,27 +213,28 @@ object JalaliCalendar {
 
     /**
      * Converts a Jalali date string (e.g. 1405/01/15) to epochDay (days since 1970-01-01 UTC).
+     * Uses fixed UTC timezone at 12:00:00 noon with cleared fields to eliminate any DST or midnight drift.
      */
     fun toEpochDay(dateStr: String): Long {
         return try {
             val (jy, jm, jd) = parseDate(dateStr)
             val (gy, gm, gd) = jalaliToGregorian(jy, jm, jd)
-            val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+            val cal = Calendar.getInstance(UTC_TIME_ZONE)
             cal.clear()
-            cal.set(gy, gm - 1, gd)
-            cal.timeInMillis / 86400000L
+            cal.set(gy, gm - 1, gd, 12, 0, 0)
+            Math.floorDiv(cal.timeInMillis, MILLIS_PER_DAY)
         } catch (e: Exception) {
             0L
         }
     }
 
     /**
-     * Converts epochDay to JalaliDate.
+     * Converts epochDay to JalaliDate using fixed UTC timezone at 12:00:00 noon.
      */
     fun fromEpochDay(epochDay: Long): JalaliDate {
-        val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+        val cal = Calendar.getInstance(UTC_TIME_ZONE)
         cal.clear()
-        cal.timeInMillis = epochDay * 86400000L
+        cal.timeInMillis = epochDay * MILLIS_PER_DAY + NOON_OFFSET_MILLIS
         return gregorianToJalali(
             cal.get(Calendar.YEAR),
             cal.get(Calendar.MONTH) + 1,
@@ -244,8 +251,9 @@ object JalaliCalendar {
                 val jm = parts[1].trim().toInt()
                 val jd = parts[2].trim().toInt()
                 val (gy, gm, gd) = jalaliToGregorian(jy, jm, jd)
-                val cal = Calendar.getInstance()
-                cal.set(gy, gm - 1, gd)
+                val cal = Calendar.getInstance(UTC_TIME_ZONE)
+                cal.clear()
+                cal.set(gy, gm - 1, gd, 12, 0, 0)
                 getDayOfWeekPersian(cal.get(Calendar.DAY_OF_WEEK))
             } else {
                 todayDayOfWeek()
@@ -259,7 +267,7 @@ object JalaliCalendar {
         "شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"
     )
 
-    fun todayDayOfWeek(): String = getDayOfWeek()
+    fun todayDayOfWeek(): String = getDayOfWeek(todayString())
 
     /**
      * Checks if a Jalali year is a leap year (کبیسه).

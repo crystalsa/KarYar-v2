@@ -20,7 +20,9 @@ import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.util.FinancialSummary
 import com.karyar.app.util.JalaliCalendar
 import com.karyar.app.util.WageCalculator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -28,8 +30,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -65,51 +69,79 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
 
     // All Folders (Workplaces)
     val allFolders: StateFlow<List<WorkplaceFolderEntity>> = repository.allFolders
+        .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Currently Selected Workplace Folder
     val currentFolder = MutableStateFlow<WorkplaceFolderEntity?>(null)
 
     // Date/Day Folders for current workplace folder
-    val dateFolders: StateFlow<List<DateFolderEntity>> = currentFolder.flatMapLatest { folder ->
-        if (folder != null) repository.getDateFoldersByFolder(folder.id)
-        else flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val dateFolders: StateFlow<List<DateFolderEntity>> = currentFolder
+        .flatMapLatest { folder ->
+            if (folder != null) repository.getDateFoldersByFolder(folder.id).distinctUntilChanged()
+            else flowOf(emptyList())
+        }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Selected Date Folder (inside Workers & Attendance screens)
     val selectedDateFolder = MutableStateFlow<DateFolderEntity?>(null)
 
     // Workers for selected folder (all workers in workplace)
-    val workers: StateFlow<List<WorkerEntity>> = currentFolder.flatMapLatest { folder ->
-        if (folder != null) repository.getWorkersByFolder(folder.id)
-        else flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val workers: StateFlow<List<WorkerEntity>> = currentFolder
+        .flatMapLatest { folder ->
+            if (folder != null) repository.getWorkersByFolder(folder.id).distinctUntilChanged()
+            else flowOf(emptyList())
+        }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Attendance for selected folder
-    val attendanceList: StateFlow<List<AttendanceEntity>> = currentFolder.flatMapLatest { folder ->
-        if (folder != null) repository.getAttendanceByFolder(folder.id)
-        else flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val attendanceList: StateFlow<List<AttendanceEntity>> = currentFolder
+        .flatMapLatest { folder ->
+            if (folder != null) repository.getAttendanceByFolder(folder.id).distinctUntilChanged()
+            else flowOf(emptyList())
+        }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Indexed single-day attendance flow for the selected date folder
+    private val selectedDateFolderAttendances: Flow<List<AttendanceEntity>> = selectedDateFolder
+        .flatMapLatest { dateFolder ->
+            if (dateFolder != null) {
+                repository.getAttendanceForDateInFolder(dateFolder.folderId, dateFolder.date)
+                    .distinctUntilChanged()
+            } else {
+                flowOf(emptyList())
+            }
+        }
+        .distinctUntilChanged()
 
     // Workers inside the active date folder (همگام با حضور و غیاب و پوشه تاریخ)
     val workersInDateFolder: StateFlow<List<WorkerEntity>> = combine(
         selectedDateFolder,
         workers,
-        attendanceList
-    ) { dateFolder, workerList, attList ->
+        selectedDateFolderAttendances
+    ) { dateFolder, workerList, dayAttList ->
         if (dateFolder != null) {
-            val attendedIds = attList.filter { it.date == dateFolder.date }.map { it.workerId }.toSet()
+            val attendedIds = dayAttList.asSequence().map { it.workerId }.toHashSet()
             workerList.filter { worker -> worker.id in attendedIds }
         } else {
             workerList
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Expenses for selected folder
-    val expenses: StateFlow<List<ExpenseEntity>> = currentFolder.flatMapLatest { folder ->
-        if (folder != null) repository.getExpensesByFolder(folder.id)
-        else flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val expenses: StateFlow<List<ExpenseEntity>> = currentFolder
+        .flatMapLatest { folder ->
+            if (folder != null) repository.getExpensesByFolder(folder.id).distinctUntilChanged()
+            else flowOf(emptyList())
+        }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Selected Date for Daily Bookkeeping on Dashboard
     val selectedDailyDate = MutableStateFlow<String>(JalaliCalendar.todayString())
@@ -149,20 +181,52 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // Indexed single-day attendance & expense flows for Daily Bookkeeping
+    private val selectedDailyDateAttendances: Flow<List<AttendanceEntity>> = combine(
+        currentFolder,
+        selectedDailyDate
+    ) { folder, dateStr -> folder?.id to dateStr }
+        .distinctUntilChanged()
+        .flatMapLatest { (folderId, dateStr) ->
+            if (folderId != null) {
+                repository.getAttendanceForDateInFolder(folderId, dateStr).distinctUntilChanged()
+            } else {
+                flowOf(emptyList())
+            }
+        }
+        .distinctUntilChanged()
+
+    private val selectedDailyDateExpenses: Flow<List<ExpenseEntity>> = combine(
+        currentFolder,
+        selectedDailyDate
+    ) { folder, dateStr -> folder?.id to dateStr }
+        .distinctUntilChanged()
+        .flatMapLatest { (folderId, dateStr) ->
+            if (folderId != null) {
+                repository.getExpensesForDateInFolder(folderId, dateStr).distinctUntilChanged()
+            } else {
+                flowOf(emptyList())
+            }
+        }
+        .distinctUntilChanged()
+
     // Daily Bookkeeping (حساب و کتاب روزانه در صفحه اصلی)
     val dailyBookkeeping: StateFlow<DailyBookkeeping> = combine(
         selectedDailyDate,
         workers,
-        attendanceList,
-        expenses
-    ) { dateStr, workerList, attList, expList ->
+        selectedDailyDateAttendances,
+        selectedDailyDateExpenses
+    ) { dateStr, workerList, dayAttList, dayExpList ->
         WageCalculator.calculateDailyBookkeeping(
             dateStr = dateStr,
             workers = workerList,
-            attendances = attList,
-            expenses = expList
+            attendances = dayAttList,
+            expenses = dayExpList
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DailyBookkeeping())
+    }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DailyBookkeeping())
 
     // Unified Project Financial Summary (single source of truth for analytics & performances)
     val financialSummary: StateFlow<FinancialSummary> = combine(
@@ -175,11 +239,16 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
             attendances = attList,
             expenses = expList
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FinancialSummary.EMPTY)
+    }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FinancialSummary.EMPTY)
 
     // Worker Performance Summaries directly from unified FinancialSummary
     val workerPerformances: StateFlow<List<WorkerPerformance>> = financialSummary
         .map { it.workerPerformances }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Reactive Analytics for the current folder - synced with all days & all workers
@@ -192,10 +261,11 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         val distinctCalendarDays = if (dayFolders.isNotEmpty()) {
             dayFolders.size
         } else {
-            val attendedDates = attList.filter { it.status != com.karyar.app.data.local.entity.AttendanceStatus.ABSENT }
+            val attendedDates = attList.asSequence()
+                .filter { it.status != AttendanceStatus.ABSENT }
                 .map { it.date }
                 .distinct()
-                .size
+                .count()
             if (attendedDates > 0) attendedDates else if (summary.totalWorkDaysCount > 0) 1 else 0
         }
         DashboardAnalytics(
@@ -221,7 +291,10 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
             grandTotalProjectCost = summary.grandTotalProjectCost,
             totalWorkerDebt = summary.totalWorkerDebt
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardAnalytics())
+    }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardAnalytics())
 
     // Selection Handlers
     fun selectFolder(folder: WorkplaceFolderEntity?) {
@@ -239,7 +312,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Workplace Folder Actions
     fun addFolder(name: String, foremanName: String, employerName: String, colorTag: Long, notes: String = "") {
-        viewModelScope.launch {
+        launchDb("addFolder") {
             val newId = repository.insertFolder(
                 WorkplaceFolderEntity(
                     name = name,
@@ -326,9 +399,10 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateDateFolder(dateFolder: DateFolderEntity) {
         launchDb("updateDateFolder") {
-            repository.updateDateFolder(dateFolder)
+            val updated = dateFolder.copy(epochDay = JalaliCalendar.toEpochDay(dateFolder.date))
+            repository.updateDateFolder(updated)
             if (selectedDateFolder.value?.id == dateFolder.id) {
-                selectedDateFolder.value = dateFolder
+                selectedDateFolder.value = updated
             }
         }
     }
@@ -501,8 +575,8 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         val activeDf = selectedDateFolder.value
         val dfId = if (activeDf?.date == dateStr) activeDf.id else 0L
 
-        viewModelScope.launch {
-            val existing = attendanceList.value.firstOrNull { it.workerId == worker.id && it.date == dateStr }
+        launchDb("setAttendanceStatus") {
+            val existing = repository.getAttendanceForWorkerAndDate(worker.id, dateStr)
             if (existing != null) {
                 when (status) {
                     "FULL" -> {
@@ -695,7 +769,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadSampleData(clearFirst: Boolean = false) {
-        viewModelScope.launch {
+        launchDb("loadSampleData") {
             if (clearFirst) {
                 repository.clearAllData()
                 currentFolder.value = null
@@ -710,7 +784,7 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearAllData() {
-        viewModelScope.launch {
+        launchDb("clearAllData") {
             repository.clearAllData()
             currentFolder.value = null
             selectedDateFolder.value = null

@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.karyar.app.util.JalaliCalendar
 
 @Entity(
     tableName = "date_folders",
@@ -30,5 +31,5 @@ data class DateFolderEntity(
     val title: String = "",         // عنوان اختیاری مثلا: بتن‌ریزی سقف اول
     val notes: String = "",         // توضیحات روز
     val createdAt: Long = System.currentTimeMillis(),
-    val epochDay: Long = 0L         // تاریخ به صورت epochDay برای فیلتر و مرتب‌سازی دقیق
+    val epochDay: Long = JalaliCalendar.toEpochDay(date) // تاریخ به صورت epochDay برای فیلتر و مرتب‌سازی دقیق
 )
