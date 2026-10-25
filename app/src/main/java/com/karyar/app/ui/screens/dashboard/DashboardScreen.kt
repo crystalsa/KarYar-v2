@@ -74,8 +74,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.ui.WorkerViewModel
-import com.karyar.app.ui.components.AddExpenseDialog
-import com.karyar.app.ui.components.ExpensesManagementSection
 import com.karyar.app.ui.components.GlowStatCard
 import com.karyar.app.ui.components.HairlineCard
 import com.karyar.app.ui.components.IconicsBox
@@ -107,9 +105,6 @@ fun DashboardScreen(
     val workerPerformances by viewModel.workerPerformances.collectAsState()
     val dateFolders by viewModel.dateFolders.collectAsState()
     val attendanceList by viewModel.attendanceList.collectAsState()
-    val expenses by viewModel.expenses.collectAsState()
-    val selectedDailyDate by viewModel.selectedDailyDate.collectAsState()
-    var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
 
     // 1. When app starts fresh without any folder selected:
     // "صفحه اول کار وقتی شروع میشه باید خالی باشه"
@@ -456,16 +451,6 @@ fun DashboardScreen(
             }
         }
 
-        // بخش هزینه‌های فردی و گروهی کارگاه (ثبت و حذف هزینه)
-        item {
-            ExpensesManagementSection(
-                expenses = expenses,
-                workers = workers,
-                onAddExpenseClick = { showAddExpenseDialog = true },
-                onDeleteExpense = { viewModel.deleteExpense(it) }
-            )
-        }
-
         // بخش ۲: خلاصه کارکرد و دستمزد هر پرسنل در کل پروژه با فلش رو به پایین (پیش‌فرض مخفی)
         // User request:
         // "در زیر هم مثلا کلا روز هایی که سعید احمدی کار کرده ، کل دستمزدی که گرفته کل اضافه کاری یا کل دستمزد ساعتی که گرفته یا کل ایاب و ذهاب و غیره کاهشی افزایش رو بنویس و برای این که شلوغ نشه پیشفرض مخفی باشه و با یک فلش رو به پایین جزئیاتش دیده بشه"
@@ -524,18 +509,6 @@ fun DashboardScreen(
                 WorkerCumulativePerformanceCard(perf = perf)
             }
         }
-    }
-
-    if (showAddExpenseDialog) {
-        AddExpenseDialog(
-            workers = workers,
-            initialDate = selectedDailyDate.ifBlank { JalaliCalendar.todayString() },
-            onDismiss = { showAddExpenseDialog = false },
-            onConfirm = { newExpense ->
-                viewModel.addExpense(newExpense)
-                showAddExpenseDialog = false
-            }
-        )
     }
 }
 

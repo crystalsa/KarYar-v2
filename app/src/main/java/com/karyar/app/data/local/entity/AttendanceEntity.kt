@@ -2,6 +2,7 @@ package com.karyar.app.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.karyar.app.util.JalaliCalendar
@@ -64,5 +65,24 @@ data class AttendanceEntity(
     val accommodationImpact: String = "ALLOWANCE",
     val medicalAllowance: Long = 0L,
     val medicalImpact: String = "ALLOWANCE",
+    /**
+     * نام تاریخی ستون دیتابیس که در عمل تعیین می‌کند آیا محاسبه دستمزد روزانه
+     * باید مستقیماً از مقادیر ثبت‌شده روی همین رکورد حضور ([dailyWage]، [hourlyWageRate]،
+     * [overtimeRate] و مزایا/کسورات) استفاده کند (حتی اگر صفر باشند) یا در صورت صفر بودن
+     * به مقادیر پیش‌فرض پروفایل کارگر ([WorkerEntity]) برگردد.
+     *
+     * برای خوانایی بیشتر در کد، از پراپرتی هم‌معنی [usesRecordValues] استفاده کنید.
+     * نام ستون دیتابیس (`hasCustomAllowances`) برای حفظ سازگاری با اسکیمای Room تغییر نکرده است.
+     */
     val hasCustomAllowances: Boolean = false
-)
+) {
+    /**
+     * نام روشن‌تر و گویا برای [hasCustomAllowances]:
+     * نشان می‌دهد که این رکورد حضور دارای مقادیر مستقل خود رکورد است (شامل دستمزد روزانه،
+     * نرخ ساعتی، نرخ اضافه‌کاری و مزایا/کسورات) و نباید در صورت صفر بودن به پروفایل کارگر fallback کند.
+     */
+    @get:Ignore
+    val usesRecordValues: Boolean
+        get() = hasCustomAllowances
+}
+

@@ -455,9 +455,259 @@ object WageCalculator {
     }
 
     /**
+     * نتیجه تفکیک‌شده مزایا (افزایشی) و کسورات (کاهشی) روزانه کارگر در ۴ دسته:
+     * ایاب‌وذهاب، خوراک، مسکن و درمان.
+     */
+    data class ResolvedAllowances(
+        val transitAllowance: Long,
+        val foodAllowance: Long,
+        val accommodationAllowance: Long,
+        val medicalAllowance: Long,
+        val transitDeduction: Long,
+        val foodDeduction: Long,
+        val accommodationDeduction: Long,
+        val medicalDeduction: Long,
+        val totalAllowances: Long,
+        val totalDeductions: Long
+    )
+
+    /**
+     * محاسبه دستمزد پایه روزانه (`baseWage`) بر اساس وضعیت حضور و فلگ [usesRecordValues]
+     * (نام روشن‌تر برای [AttendanceEntity.hasCustomAllowances]).
+     *
+     * قوانین:
+     * - اگر [usesRecordValues] فعال باشد، مقدار `att.dailyWage` مستقیماً ملاک است (حتی اگر صفر باشد؛
+     *   و در حالت ساعتی مقادیر منفی یا صفر به `0L` تبدیل می‌شوند).
+     * - اگر [usesRecordValues] غیرفعال باشد:
+     *   - در حالت ساعتی (`isHourly`): دستمزد روزانه `0L` است.
+     *   - در حالت نصف روز (`isHalfDay`): اگر `att.dailyWage > 0` باشد همان مقدار و در غیر این صورت نصف `worker.baseDailyWage` (با گرد کردن نیم به بالا).
+     *   - در حالت تمام روز: اگر `att.dailyWage > 0` باشد همان مقدار و در غیر این صورت `worker.baseDailyWage`.
+     */
+    fun resolveBaseWage(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        isHourly: Boolean = isHourly(worker, att),
+        isHalfDay: Boolean = isHalfDay(worker, att),
+        usesRecordValues: Boolean = att?.usesRecordValues == true
+    ): Long {
+        return if (usesRecordValues && att != null) {
+            if (isHourly && att.dailyWage <= 0L) 0L else att.dailyWage
+        } else if (isHourly) {
+            0L
+        } else when {
+            isHalfDay -> {
+                if (att?.dailyWage != null && att.dailyWage > 0L) att.dailyWage
+                else roundToLong(worker.baseDailyWage / 2.0)
+            }
+            att != null && att.dailyWage > 0L -> att.dailyWage
+            else -> worker.baseDailyWage
+        }
+    }
+
+    /**
+     * استخراج نرخ ساعتی مؤثر کارگر برای روز جاری با در نظر گرفتن [usesRecordValues] و ترتیب fallback:
+     * `att.hourlyWageRate` -> `att.hourlyWage` -> (در صورت عدم فعال بودن `usesRecordValues`) `worker.hourlyWageRate` -> `worker.baseHourlyWage`.
+     */
+    fun resolveHourlyRate(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        usesRecordValues: Boolean = att?.usesRecordValues == true
+    ): Long {
+        return if (usesRecordValues && att != null) {
+            if (att.hourlyWageRate > 0L) att.hourlyWageRate else att.hourlyWage
+        } else if (att != null && att.hourlyWageRate > 0L) {
+            att.hourlyWageRate
+        } else if (att != null && att.hourlyWage > 0L) {
+            att.hourlyWage
+        } else if (worker.hourlyWageRate > 0L) {
+            worker.hourlyWageRate
+        } else {
+            worker.baseHourlyWage
+        }
+    }
+
+    /**
+     * محاسبه دستمزد ساعتی (`hourlyPay`) برای یک روز کاری.
+     * فقط از ساعت ثبت‌شده روی رکورد حضور (`att.hourlyHours`) استفاده می‌کند و در صورت سرریز یا ساعت منفی
+     * خطای [ArithmeticException] پرتاب می‌کند.
+     */
+    fun resolveHourlyPay(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        isHourly: Boolean = isHourly(worker, att),
+        usesRecordValues: Boolean = att?.usesRecordValues == true,
+        hourlyRate: Long = resolveHourlyRate(worker, att, usesRecordValues)
+    ): Long {
+        val hHours = att?.hourlyHours ?: 0.0
+        if (!hHours.isFinite() || hHours < 0.0) {
+            throw ArithmeticException("ساعت کارکرد ساعتی نامعتبر است: $hHours")
+        }
+        val hasCustomHourly = usesRecordValues && att != null &&
+            att.status == AttendanceStatus.FULL_DAY && hHours > 0.0 && hourlyRate > 0L
+        return if ((isHourly || hasCustomHourly) && hHours > 0.0 && hourlyRate > 0L) {
+            safeMultiplyHoursAndRate(hHours, hourlyRate)
+        } else {
+            0L
+        }
+    }
+
+    /**
+     * محاسبه دستمزد اضافه‌کاری (`overtimePay`) برای یک روز کاری.
+     *
+     * ترتیب تعیین نرخ اضافه‌کاری (`otRate`):
+     * ۱. اگر [usesRecordValues] فعال باشد: مستقیماً `att.overtimeRate` (حتی اگر `0L` باشد).
+     * ۲. اگر `att.overtimeRate > 0L` باشد: `att.overtimeRate`.
+     * ۳. اگر `worker.overtimeRate > 0L` باشد: `worker.overtimeRate`.
+     * ۴. در غیر این صورت: محاسبه خودکار با ضریب [overtimeMultiplier] (پیش‌فرض ۱٫۴ برابر نرخ پایه ساعتی یا `baseDailyWage / 8.0`).
+     */
+    fun resolveOvertimePay(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER,
+        isHourly: Boolean = isHourly(worker, att),
+        usesRecordValues: Boolean = att?.usesRecordValues == true,
+        hourlyRate: Long = resolveHourlyRate(worker, att, usesRecordValues)
+    ): Long {
+        val hHours = att?.hourlyHours ?: 0.0
+        val otHours = att?.overtimeHours ?: 0.0
+        if (!otHours.isFinite() || otHours < 0.0) {
+            throw ArithmeticException("ساعت اضافه‌کاری نامعتبر است: $otHours")
+        }
+        val otRate = if (usesRecordValues && att != null) {
+            att.overtimeRate
+        } else if (att != null && att.overtimeRate > 0L) {
+            att.overtimeRate
+        } else if (worker.overtimeRate > 0L) {
+            worker.overtimeRate
+        } else {
+            val baseRate = if (hourlyRate > 0L) {
+                hourlyRate.toDouble()
+            } else if (worker.baseDailyWage > 0L) {
+                worker.baseDailyWage.toDouble() / 8.0
+            } else {
+                0.0
+            }
+            roundToLong(baseRate * overtimeMultiplier)
+        }
+
+        val canHaveOvertime = if (isHourly) hHours > 0.0 else true
+        return if (canHaveOvertime && otHours > 0.0 && otRate > 0L) {
+            safeMultiplyHoursAndRate(otHours, otRate)
+        } else {
+            0L
+        }
+    }
+
+    /**
+     * محاسبه ساعات کار عادی (`regularHours`) برای یک روز کاری.
+     */
+    fun resolveRegularHours(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        isHourly: Boolean = isHourly(worker, att),
+        isHalfDay: Boolean = isHalfDay(worker, att)
+    ): Double {
+        return if (isHourly) {
+            0.0
+        } else if (att != null && att.regularHours > 0.0) {
+            att.regularHours
+        } else if (isHalfDay) {
+            4.0
+        } else {
+            8.0
+        }
+    }
+
+    /**
+     * تابع یکپارچه محاسبه مزایا و کسورات روزانه در هر دو حالت حضور و غیبت.
+     *
+     * - اگر [usesRecordValues] فعال باشد، مقادیر و نوع تأثیر (`ALLOWANCE` / `DEDUCTION`) از رکورد حضور (`att`)
+     *   خوانده می‌شوند؛ در غیر این صورت از پروفایل کارگر (`worker`) استفاده می‌شود.
+     * - در روز غیبت ([isAbsent] == true)، مزایای افزایشی (`ALLOWANCE`) صفر است ولی کسورات (`DEDUCTION`)
+     *   طبق قانون کسورات ثابت روز غیبت لحاظ می‌گردد.
+     */
+    fun resolveAllowances(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        isAbsent: Boolean = isAbsent(worker, att),
+        usesRecordValues: Boolean = att?.usesRecordValues == true
+    ): ResolvedAllowances {
+        fun resolveCategory(
+            attAmount: Long,
+            attImpact: String,
+            workerAmount: Long,
+            workerImpact: String
+        ): Pair<Long, Long> {
+            val effectiveAmount = if (usesRecordValues && att != null) attAmount else workerAmount
+            val effectiveImpact = if (usesRecordValues && att != null) attImpact else workerImpact
+            val allowance = if (!isAbsent && effectiveImpact == "ALLOWANCE") effectiveAmount else 0L
+            val deduction = if (effectiveImpact == "DEDUCTION") effectiveAmount else 0L
+            return allowance to deduction
+        }
+
+        val (transitAllowance, transitDeduction) = resolveCategory(
+            attAmount = att?.transitAllowance ?: 0L,
+            attImpact = att?.transitImpact ?: "ALLOWANCE",
+            workerAmount = worker.transitAllowance,
+            workerImpact = worker.transitImpact
+        )
+        val (foodAllowance, foodDeduction) = resolveCategory(
+            attAmount = att?.foodAllowance ?: 0L,
+            attImpact = att?.foodImpact ?: "ALLOWANCE",
+            workerAmount = worker.foodAllowance,
+            workerImpact = worker.foodImpact
+        )
+        val (accomAllowance, accomDeduction) = resolveCategory(
+            attAmount = att?.accommodationAllowance ?: 0L,
+            attImpact = att?.accommodationImpact ?: "ALLOWANCE",
+            workerAmount = worker.accommodationAllowance,
+            workerImpact = worker.accommodationImpact
+        )
+        val (medAllowance, medDeduction) = resolveCategory(
+            attAmount = att?.medicalAllowance ?: 0L,
+            attImpact = att?.medicalImpact ?: "ALLOWANCE",
+            workerAmount = worker.medicalAllowance,
+            workerImpact = worker.medicalImpact
+        )
+
+        val totalAllowances = if (isAbsent) {
+            0L
+        } else {
+            Math.addExact(
+                Math.addExact(transitAllowance, foodAllowance),
+                Math.addExact(accomAllowance, medAllowance)
+            )
+        }
+        val totalDeductions = Math.addExact(
+            Math.addExact(transitDeduction, foodDeduction),
+            Math.addExact(accomDeduction, medDeduction)
+        )
+
+        return ResolvedAllowances(
+            transitAllowance = transitAllowance,
+            foodAllowance = foodAllowance,
+            accommodationAllowance = accomAllowance,
+            medicalAllowance = medAllowance,
+            transitDeduction = transitDeduction,
+            foodDeduction = foodDeduction,
+            accommodationDeduction = accomDeduction,
+            medicalDeduction = medDeduction,
+            totalAllowances = totalAllowances,
+            totalDeductions = totalDeductions
+        )
+    }
+
+    /**
      * Detailed single-day calculation result for a worker.
      * All multiplications, additions, and subtractions are protected with [Math.multiplyExact],
      * [Math.addExact], [Math.subtractExact], and [Math.negateExact].
+     *
+     * Delegates to named helper functions:
+     * - [resolveBaseWage]
+     * - [resolveHourlyRate] & [resolveHourlyPay]
+     * - [resolveOvertimePay]
+     * - [resolveRegularHours]
+     * - [resolveAllowances] (unified across absent and working days)
      */
     fun calculateDay(
         worker: WorkerEntity,
@@ -468,32 +718,19 @@ object WageCalculator {
             throw ArithmeticException("ضریب اضافه‌کاری نامعتبر است: $overtimeMultiplier")
         }
 
+        val usesRecordValues = att?.usesRecordValues == true
+
         if (isAbsent(worker, att)) {
             // Rule: Absent day (کارگر غایب):
             // - دستمزد روزانه، دستمزد ساعتی، اضافه کاری و مزایا (افزایشی) صفر است.
             // - کسورات (کسر ایاب و ذهاب، مسکن، خوراک، درمان) حتی در روز غیبت لحاظ می‌شود.
-            val useAttAllowances = att != null && att.hasCustomAllowances
-            val effectiveTransitAllowance = if (useAttAllowances) att.transitAllowance else worker.transitAllowance
-            val effectiveTransitImpact = if (useAttAllowances) att.transitImpact else worker.transitImpact
-            val transitDeduction = if (effectiveTransitImpact == "DEDUCTION") effectiveTransitAllowance else 0L
-
-            val effectiveFoodAllowance = if (useAttAllowances) att.foodAllowance else worker.foodAllowance
-            val effectiveFoodImpact = if (useAttAllowances) att.foodImpact else worker.foodImpact
-            val foodDeduction = if (effectiveFoodImpact == "DEDUCTION") effectiveFoodAllowance else 0L
-
-            val effectiveAccomAllowance = if (useAttAllowances) att.accommodationAllowance else worker.accommodationAllowance
-            val effectiveAccomImpact = if (useAttAllowances) att.accommodationImpact else worker.accommodationImpact
-            val accomDeduction = if (effectiveAccomImpact == "DEDUCTION") effectiveAccomAllowance else 0L
-
-            val effectiveMedAllowance = if (useAttAllowances) att.medicalAllowance else worker.medicalAllowance
-            val effectiveMedImpact = if (useAttAllowances) att.medicalImpact else worker.medicalImpact
-            val medDeduction = if (effectiveMedImpact == "DEDUCTION") effectiveMedAllowance else 0L
-
-            val totalDeductions = Math.addExact(
-                Math.addExact(transitDeduction, foodDeduction),
-                Math.addExact(accomDeduction, medDeduction)
+            val allowances = resolveAllowances(
+                worker = worker,
+                att = att,
+                isAbsent = true,
+                usesRecordValues = usesRecordValues
             )
-            val absentNetPayout = Math.negateExact(totalDeductions)
+            val absentNetPayout = Math.negateExact(allowances.totalDeductions)
 
             return DayCalculationResult(
                 isWorkingDay = false,
@@ -503,116 +740,81 @@ object WageCalculator {
                 baseWage = 0L,
                 hourlyPay = 0L,
                 overtimePay = 0L,
-                totalAllowances = 0L,
-                totalDeductions = totalDeductions,
+                totalAllowances = allowances.totalAllowances,
+                totalDeductions = allowances.totalDeductions,
                 netPayout = absentNetPayout,
                 clampedNetPayout = 0L,
-                transitAllowance = 0L,
-                foodAllowance = 0L,
-                accommodationAllowance = 0L,
-                medicalAllowance = 0L,
-                transitDeduction = transitDeduction,
-                foodDeduction = foodDeduction,
-                accommodationDeduction = accomDeduction,
-                medicalDeduction = medDeduction
+                transitAllowance = allowances.transitAllowance,
+                foodAllowance = allowances.foodAllowance,
+                accommodationAllowance = allowances.accommodationAllowance,
+                medicalAllowance = allowances.medicalAllowance,
+                transitDeduction = allowances.transitDeduction,
+                foodDeduction = allowances.foodDeduction,
+                accommodationDeduction = allowances.accommodationDeduction,
+                medicalDeduction = allowances.medicalDeduction
             )
         }
 
         val hourly = isHourly(worker, att)
         val halfDay = isHalfDay(worker, att)
-        val useAttAllowances = att != null && att.hasCustomAllowances
+        val hHours = att?.hourlyHours ?: 0.0
+        val otHours = att?.overtimeHours ?: 0.0
 
-        // 1. Base Daily Wage (if custom day record exists, respects explicit 0L when daily wage is disabled or set to 0)
-        val baseWage = if (useAttAllowances) {
-            if (hourly && att!!.dailyWage <= 0L) 0L else att!!.dailyWage
-        } else if (hourly) 0L else when {
-            halfDay -> {
-                if (att?.dailyWage != null && att.dailyWage > 0L) att.dailyWage
-                else roundToLong(worker.baseDailyWage / 2.0)
-            }
-            att != null && att.dailyWage > 0L -> att.dailyWage
-            else -> worker.baseDailyWage
-        }
+        // 1. Base Daily Wage
+        val baseWage = resolveBaseWage(
+            worker = worker,
+            att = att,
+            isHourly = hourly,
+            isHalfDay = halfDay,
+            usesRecordValues = usesRecordValues
+        )
 
-        // 2. Hourly Pay (only uses att.hourlyHours; respects explicit 0 rate or 0 hours on custom day record)
-        val hHours = if (att != null) att.hourlyHours else 0.0
-        if (!hHours.isFinite() || hHours < 0.0) {
-            throw ArithmeticException("ساعت کارکرد ساعتی نامعتبر است: $hHours")
-        }
-        val hRate = if (useAttAllowances) {
-            if (att!!.hourlyWageRate > 0L) att.hourlyWageRate else att.hourlyWage
-        } else if (att != null && att.hourlyWageRate > 0L) att.hourlyWageRate
-        else if (att != null && att.hourlyWage > 0L) att.hourlyWage
-        else if (worker.hourlyWageRate > 0L) worker.hourlyWageRate
-        else worker.baseHourlyWage
-        val hasCustomHourly = useAttAllowances && att!!.status == AttendanceStatus.FULL_DAY && hHours > 0.0 && hRate > 0L
-        val hourlyPay = if ((hourly || hasCustomHourly) && hHours > 0.0 && hRate > 0L) {
-            safeMultiplyHoursAndRate(hHours, hRate)
-        } else 0L
+        // 2. Hourly Pay
+        val hourlyRate = resolveHourlyRate(
+            worker = worker,
+            att = att,
+            usesRecordValues = usesRecordValues
+        )
+        val hourlyPay = resolveHourlyPay(
+            worker = worker,
+            att = att,
+            isHourly = hourly,
+            usesRecordValues = usesRecordValues,
+            hourlyRate = hourlyRate
+        )
 
-        // 3. Overtime Pay (only uses att.overtimeHours; respects explicit 0 rate or 0 hours on custom day record)
-        val otHours = if (att != null) att.overtimeHours else 0.0
-        if (!otHours.isFinite() || otHours < 0.0) {
-            throw ArithmeticException("ساعت اضافه‌کاری نامعتبر است: $otHours")
-        }
-        val otRate = if (useAttAllowances) {
-            att!!.overtimeRate
-        } else if (att != null && att.overtimeRate > 0L) att.overtimeRate
-        else if (worker.overtimeRate > 0L) worker.overtimeRate
-        else {
-            val baseRate = if (hRate > 0L) hRate.toDouble()
-                           else if (worker.baseDailyWage > 0L) (worker.baseDailyWage.toDouble() / 8.0)
-                           else 0.0
-            roundToLong(baseRate * overtimeMultiplier)
-        }
-
-        val canHaveOvertime = if (hourly) hHours > 0.0 else true
-        val overtimePay = if (canHaveOvertime && otHours > 0.0 && otRate > 0L) {
-            safeMultiplyHoursAndRate(otHours, otRate)
-        } else 0L
+        // 3. Overtime Pay
+        val overtimePay = resolveOvertimePay(
+            worker = worker,
+            att = att,
+            overtimeMultiplier = overtimeMultiplier,
+            isHourly = hourly,
+            usesRecordValues = usesRecordValues,
+            hourlyRate = hourlyRate
+        )
 
         // 4. Regular Hours
-        val regHours = if (hourly) 0.0
-                       else if (att != null && att.regularHours > 0.0) att.regularHours
-                       else if (halfDay) 4.0
-                       else 8.0
-
-        // 5. Allowances and Deductions (applied once per working day; reads from attendance record if customized, otherwise falls back to worker template)
-        val effectiveTransitAllowance = if (useAttAllowances) att.transitAllowance else worker.transitAllowance
-        val effectiveTransitImpact = if (useAttAllowances) att.transitImpact else worker.transitImpact
-        val transitAllowance = if (effectiveTransitImpact == "ALLOWANCE") effectiveTransitAllowance else 0L
-        val transitDeduction = if (effectiveTransitImpact == "DEDUCTION") effectiveTransitAllowance else 0L
-
-        val effectiveFoodAllowance = if (useAttAllowances) att.foodAllowance else worker.foodAllowance
-        val effectiveFoodImpact = if (useAttAllowances) att.foodImpact else worker.foodImpact
-        val foodAllowance = if (effectiveFoodImpact == "ALLOWANCE") effectiveFoodAllowance else 0L
-        val foodDeduction = if (effectiveFoodImpact == "DEDUCTION") effectiveFoodAllowance else 0L
-
-        val effectiveAccomAllowance = if (useAttAllowances) att.accommodationAllowance else worker.accommodationAllowance
-        val effectiveAccomImpact = if (useAttAllowances) att.accommodationImpact else worker.accommodationImpact
-        val accomAllowance = if (effectiveAccomImpact == "ALLOWANCE") effectiveAccomAllowance else 0L
-        val accomDeduction = if (effectiveAccomImpact == "DEDUCTION") effectiveAccomAllowance else 0L
-
-        val effectiveMedAllowance = if (useAttAllowances) att.medicalAllowance else worker.medicalAllowance
-        val effectiveMedImpact = if (useAttAllowances) att.medicalImpact else worker.medicalImpact
-        val medAllowance = if (effectiveMedImpact == "ALLOWANCE") effectiveMedAllowance else 0L
-        val medDeduction = if (effectiveMedImpact == "DEDUCTION") effectiveMedAllowance else 0L
-
-        val totalAllowances = Math.addExact(
-            Math.addExact(transitAllowance, foodAllowance),
-            Math.addExact(accomAllowance, medAllowance)
+        val regHours = resolveRegularHours(
+            worker = worker,
+            att = att,
+            isHourly = hourly,
+            isHalfDay = halfDay
         )
-        val totalDeductions = Math.addExact(
-            Math.addExact(transitDeduction, foodDeduction),
-            Math.addExact(accomDeduction, medDeduction)
+
+        // 5. Allowances and Deductions (unified with absent-day logic via resolveAllowances)
+        val allowances = resolveAllowances(
+            worker = worker,
+            att = att,
+            isAbsent = false,
+            usesRecordValues = usesRecordValues
         )
 
         // 6. Net Payout for single-day (preserves negative daily balance when deductions > gross)
         val gross = Math.addExact(
             Math.addExact(baseWage, hourlyPay),
-            Math.addExact(overtimePay, totalAllowances)
+            Math.addExact(overtimePay, allowances.totalAllowances)
         )
-        val rawNet = Math.subtractExact(gross, totalDeductions)
+        val rawNet = Math.subtractExact(gross, allowances.totalDeductions)
 
         return DayCalculationResult(
             isWorkingDay = true,
@@ -622,18 +824,18 @@ object WageCalculator {
             baseWage = baseWage,
             hourlyPay = hourlyPay,
             overtimePay = overtimePay,
-            totalAllowances = totalAllowances,
-            totalDeductions = totalDeductions,
+            totalAllowances = allowances.totalAllowances,
+            totalDeductions = allowances.totalDeductions,
             netPayout = rawNet,
             clampedNetPayout = rawNet.coerceAtLeast(0L),
-            transitAllowance = transitAllowance,
-            foodAllowance = foodAllowance,
-            accommodationAllowance = accomAllowance,
-            medicalAllowance = medAllowance,
-            transitDeduction = transitDeduction,
-            foodDeduction = foodDeduction,
-            accommodationDeduction = accomDeduction,
-            medicalDeduction = medDeduction
+            transitAllowance = allowances.transitAllowance,
+            foodAllowance = allowances.foodAllowance,
+            accommodationAllowance = allowances.accommodationAllowance,
+            medicalAllowance = allowances.medicalAllowance,
+            transitDeduction = allowances.transitDeduction,
+            foodDeduction = allowances.foodDeduction,
+            accommodationDeduction = allowances.accommodationDeduction,
+            medicalDeduction = allowances.medicalDeduction
         )
     }
 
