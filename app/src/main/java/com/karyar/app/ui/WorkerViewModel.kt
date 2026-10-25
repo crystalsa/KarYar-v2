@@ -6,12 +6,14 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.karyar.app.data.local.AppDatabase
+import com.karyar.app.data.local.MigrationReport
 import com.karyar.app.data.local.entity.AttendanceEntity
 import com.karyar.app.data.local.entity.AttendanceStatus
 import com.karyar.app.data.local.entity.DateFolderEntity
 import com.karyar.app.data.local.entity.ExpenseEntity
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
+import com.karyar.app.data.repository.DateConflictException
 import com.karyar.app.data.repository.WorkerRepository
 import com.karyar.app.domain.model.DailyBookkeeping
 import com.karyar.app.domain.model.DashboardAnalytics
@@ -20,6 +22,7 @@ import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.util.FinancialSummary
 import com.karyar.app.util.JalaliCalendar
 import com.karyar.app.util.WageCalculator
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -39,13 +42,30 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class WorkerViewModel(application: Application) : AndroidViewModel(application) {
+class WorkerViewModel(
+    application: Application,
+    customRepository: WorkerRepository?,
+    customFoldersFlow: Flow<List<WorkplaceFolderEntity>>?
+) : AndroidViewModel(application) {
 
-    private val repository: WorkerRepository
+    constructor(application: Application) : this(
+        application = application,
+        customRepository = null,
+        customFoldersFlow = null
+    )
 
-    init {
+    constructor(
+        application: Application,
+        foldersFlow: Flow<List<WorkplaceFolderEntity>>
+    ) : this(
+        application = application,
+        customRepository = null,
+        customFoldersFlow = foldersFlow
+    )
+
+    private val repository: WorkerRepository = customRepository ?: run {
         val database = AppDatabase.getDatabase(application)
-        repository = WorkerRepository(
+        WorkerRepository(
             database = database,
             folderDao = database.folderDao(),
             dateFolderDao = database.dateFolderDao(),
@@ -53,27 +73,57 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
             attendanceDao = database.attendanceDao(),
             expenseDao = database.expenseDao()
         )
-        viewModelScope.launch {
-            repository.allFolders.collect { folderList ->
-                if (folderList.isEmpty()) {
-                    currentFolder.value = null
-                    selectedDateFolder.value = null
-                } else if (currentFolder.value == null) {
-                    currentFolder.value = folderList.first()
-                } else if (folderList.none { it.id == currentFolder.value?.id }) {
-                    currentFolder.value = folderList.firstOrNull()
-                }
-            }
-        }
     }
 
-    // All Folders (Workplaces)
-    val allFolders: StateFlow<List<WorkplaceFolderEntity>> = repository.allFolders
-        .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val foldersSourceFlow: Flow<List<WorkplaceFolderEntity>> =
+        customFoldersFlow ?: repository.allFolders
+
+    private var timeChangeReceiver: android.content.BroadcastReceiver? = null
+    private var lastAutoToday: String = JalaliCalendar.refreshToday()
+
+    // Reactive today date flow backed by JalaliCalendar.todayFlow
+    val todayFlow: StateFlow<String> = JalaliCalendar.todayFlow
 
     // Currently Selected Workplace Folder
     val currentFolder = MutableStateFlow<WorkplaceFolderEntity?>(null)
+
+    // Selected Date Folder (inside Workers & Attendance screens)
+    val selectedDateFolder = MutableStateFlow<DateFolderEntity?>(null)
+
+    // Selected Date for Daily Bookkeeping on Dashboard (synced with JalaliCalendar.todayFlow)
+    val selectedDailyDate = MutableStateFlow<String>(lastAutoToday)
+
+    // Pending migration report (e.g. from MIGRATION_5_6 duplicate/orphan cleanup)
+    val migrationReport: StateFlow<MigrationReport?> = AppDatabase.migrationReportFlow
+
+    // Worker search state (ذره‌بین بالای صفحه کنار سه نقطه)
+    val workerSearchQuery = MutableStateFlow("")
+    val isWorkerSearchVisible = MutableStateFlow(false)
+
+    // Snackbar message events for user feedback (including Undo actions)
+    private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
+
+    private val _snackbarEvents = MutableSharedFlow<SnackbarEvent>(extraBufferCapacity = 8)
+    val snackbarEvents: SharedFlow<SnackbarEvent> = _snackbarEvents.asSharedFlow()
+
+    // Confirmation dialog state before deleting an attendance record that has manual values
+    private val _pendingDeleteAttendance = MutableStateFlow<PendingAttendanceDelete?>(null)
+    val pendingDeleteAttendance: StateFlow<PendingAttendanceDelete?> = _pendingDeleteAttendance
+
+    // Conflict state when moving a date folder to a date that already has attendance records
+    private val _pendingDateConflict = MutableStateFlow<PendingDateConflict?>(null)
+    val pendingDateConflict: StateFlow<PendingDateConflict?> = _pendingDateConflict
+
+    // Undo state stack for attendance status changes and deletions
+    private val undoStack = ArrayDeque<AttendanceUndoState>()
+    private val _lastUndoState = MutableStateFlow<AttendanceUndoState?>(null)
+    val lastUndoState: StateFlow<AttendanceUndoState?> = _lastUndoState
+
+    // All Folders (Workplaces)
+    val allFolders: StateFlow<List<WorkplaceFolderEntity>> = foldersSourceFlow
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Date/Day Folders for current workplace folder
     val dateFolders: StateFlow<List<DateFolderEntity>> = currentFolder
@@ -83,9 +133,6 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    // Selected Date Folder (inside Workers & Attendance screens)
-    val selectedDateFolder = MutableStateFlow<DateFolderEntity?>(null)
 
     // Workers for selected folder (all workers in workplace)
     val workers: StateFlow<List<WorkerEntity>> = currentFolder
@@ -143,44 +190,6 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Selected Date for Daily Bookkeeping on Dashboard
-    val selectedDailyDate = MutableStateFlow<String>(JalaliCalendar.todayString())
-
-    // Worker search state (ذره‌بین بالای صفحه کنار سه نقطه)
-    val workerSearchQuery = MutableStateFlow("")
-    val isWorkerSearchVisible = MutableStateFlow(false)
-
-    fun setWorkerSearchQuery(query: String) {
-        workerSearchQuery.value = query
-    }
-
-    fun toggleWorkerSearch(visible: Boolean? = null) {
-        val next = visible ?: !isWorkerSearchVisible.value
-        isWorkerSearchVisible.value = next
-        if (!next) {
-            workerSearchQuery.value = ""
-        }
-    }
-
-    // Snackbar message events for user feedback
-    private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
-
-    fun showSnackbarMessage(message: String) {
-        _snackbarMessages.tryEmit(message)
-    }
-
-    private fun launchDb(actionName: String, block: suspend () -> Unit) {
-        viewModelScope.launch {
-            try {
-                block()
-            } catch (e: Exception) {
-                Log.e("WorkerViewModel", "Database error in $actionName", e)
-                showSnackbarMessage("خطا در ذخیره‌سازی اطلاعات")
-            }
-        }
-    }
-
     // Indexed single-day attendance & expense flows for Daily Bookkeeping
     private val selectedDailyDateAttendances: Flow<List<AttendanceEntity>> = combine(
         currentFolder,
@@ -232,12 +241,14 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     val financialSummary: StateFlow<FinancialSummary> = combine(
         workers,
         attendanceList,
-        expenses
-    ) { workerList, attList, expList ->
+        expenses,
+        JalaliCalendar.todayFlow
+    ) { workerList, attList, expList, todayStr ->
         WageCalculator.calculateFinancialSummary(
             workers = workerList,
             attendances = attList,
-            expenses = expList
+            expenses = expList,
+            todayStr = todayStr
         )
     }
         .distinctUntilChanged()
@@ -295,6 +306,109 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardAnalytics())
+
+    init {
+        AppDatabase.getPendingMigrationReport(application)
+        try {
+            timeChangeReceiver = JalaliCalendar.registerTimeChangeReceiver(application)
+        } catch (_: Exception) {}
+        startInitialCollectors()
+    }
+
+    private fun startInitialCollectors() {
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            JalaliCalendar.todayFlow.collect { newToday ->
+                if (selectedDailyDate.value == lastAutoToday) {
+                    selectedDailyDate.value = newToday
+                }
+                lastAutoToday = newToday
+            }
+        }
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            collectFolders(foldersSourceFlow)
+        }
+    }
+
+    internal suspend fun collectFolders(flow: Flow<List<WorkplaceFolderEntity>>) {
+        flow.collect { folderList ->
+            applyFoldersUpdate(folderList)
+        }
+    }
+
+    internal fun applyFoldersUpdate(folderList: List<WorkplaceFolderEntity>) {
+        if (folderList.isEmpty()) {
+            currentFolder.value = null
+            selectedDateFolder.value = null
+        } else if (currentFolder.value == null) {
+            currentFolder.value = folderList.first()
+        } else if (folderList.none { it.id == currentFolder.value?.id }) {
+            currentFolder.value = folderList.firstOrNull()
+        }
+    }
+
+    override fun onCleared() {
+        timeChangeReceiver?.let { receiver ->
+            try {
+                getApplication<Application>().unregisterReceiver(receiver)
+            } catch (_: Exception) {}
+        }
+        timeChangeReceiver = null
+        super.onCleared()
+    }
+
+    fun setWorkerSearchQuery(query: String) {
+        workerSearchQuery.value = query
+    }
+
+    fun toggleWorkerSearch(visible: Boolean? = null) {
+        val next = visible ?: !isWorkerSearchVisible.value
+        isWorkerSearchVisible.value = next
+        if (!next) {
+            workerSearchQuery.value = ""
+        }
+    }
+
+    fun dismissMigrationReport() {
+        AppDatabase.clearMigrationReport(getApplication())
+    }
+
+    fun showSnackbarMessage(
+        message: String,
+        actionLabel: String? = null,
+        withUndo: Boolean = false
+    ) {
+        _snackbarMessages.tryEmit(message)
+        _snackbarEvents.tryEmit(
+            SnackbarEvent(
+                message = message,
+                actionLabel = actionLabel,
+                withUndo = withUndo
+            )
+        )
+    }
+
+    private fun recordUndoAndNotify(undoState: AttendanceUndoState, message: String) {
+        synchronized(undoStack) {
+            undoStack.addLast(undoState)
+            _lastUndoState.value = undoState
+        }
+        showSnackbarMessage(
+            message = message,
+            actionLabel = "بازگردانی",
+            withUndo = true
+        )
+    }
+
+    private fun launchDb(actionName: String, block: suspend () -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                block()
+            } catch (e: Exception) {
+                Log.e("WorkerViewModel", "Database error in $actionName", e)
+                showSnackbarMessage("خطا در ذخیره‌سازی اطلاعات")
+            }
+        }
+    }
 
     // Selection Handlers
     fun selectFolder(folder: WorkplaceFolderEntity?) {
@@ -373,10 +487,17 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     // Date/Day Folder Actions
     fun addDateFolder(date: String, dayOfWeek: String, title: String, notes: String = "") {
         val folder = currentFolder.value ?: return
+        val error = JalaliCalendar.validateDateError(date)
+        if (error != null) {
+            showSnackbarMessage(error)
+            return
+        }
+        val (y, m, d) = JalaliCalendar.parseDate(date)
+        val normalizedDate = JalaliCalendar.formatDate(y, m, d)
         launchDb("addDateFolder") {
             val newId = repository.createNextDay(
                 folderId = folder.id,
-                date = date,
+                date = normalizedDate,
                 dayOfWeek = dayOfWeek,
                 title = title,
                 notes = notes
@@ -384,11 +505,11 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
             selectedDateFolder.value = DateFolderEntity(
                 id = newId,
                 folderId = folder.id,
-                date = date,
+                date = normalizedDate,
                 dayOfWeek = dayOfWeek,
                 title = title,
                 notes = notes,
-                epochDay = JalaliCalendar.toEpochDay(date)
+                epochDay = JalaliCalendar.toEpochDay(normalizedDate)
             )
         }
     }
@@ -398,13 +519,98 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateDateFolder(dateFolder: DateFolderEntity) {
+        val error = JalaliCalendar.validateDateError(dateFolder.date)
+        if (error != null) {
+            showSnackbarMessage(error)
+            return
+        }
         launchDb("updateDateFolder") {
-            val updated = dateFolder.copy(epochDay = JalaliCalendar.toEpochDay(dateFolder.date))
+            updateDateFolderSync(dateFolder)
+        }
+    }
+
+    suspend fun updateDateFolderSync(dateFolder: DateFolderEntity): Result<DateFolderEntity> {
+        val error = JalaliCalendar.validateDateError(dateFolder.date)
+        if (error != null) {
+            showSnackbarMessage(error)
+            return Result.failure(IllegalArgumentException(error))
+        }
+        val (y, m, d) = JalaliCalendar.parseDate(dateFolder.date)
+        val normalizedDate = JalaliCalendar.formatDate(y, m, d)
+        val updated = dateFolder.copy(
+            date = normalizedDate,
+            epochDay = JalaliCalendar.toEpochDay(normalizedDate)
+        )
+        return try {
             repository.updateDateFolder(updated)
+            _pendingDateConflict.value = null
             if (selectedDateFolder.value?.id == dateFolder.id) {
                 selectedDateFolder.value = updated
             }
+            Result.success(updated)
+        } catch (e: DateConflictException) {
+            val conflictMsg = e.message ?: DateConflictException.buildMessage(e.workerCount)
+            _pendingDateConflict.value = PendingDateConflict(
+                requestedDateFolder = updated,
+                targetDate = e.targetDate,
+                conflictingWorkers = e.conflictingWorkers,
+                message = conflictMsg
+            )
+            showSnackbarMessage(conflictMsg)
+            Result.failure(e)
         }
+    }
+
+    fun mergeDateFolder(dateFolder: DateFolderEntity) {
+        val error = JalaliCalendar.validateDateError(dateFolder.date)
+        if (error != null) {
+            showSnackbarMessage(error)
+            return
+        }
+        launchDb("mergeDateFolder") {
+            mergeDateFolderSync(dateFolder)
+        }
+    }
+
+    suspend fun mergeDateFolderSync(dateFolder: DateFolderEntity): DateFolderEntity {
+        val (y, m, d) = JalaliCalendar.parseDate(dateFolder.date)
+        val normalizedDate = JalaliCalendar.formatDate(y, m, d)
+        val updated = dateFolder.copy(
+            date = normalizedDate,
+            epochDay = JalaliCalendar.toEpochDay(normalizedDate)
+        )
+        val surviving = repository.mergeDateFolder(updated)
+        _pendingDateConflict.value = null
+        if (selectedDateFolder.value?.id == dateFolder.id || selectedDateFolder.value?.id == surviving.id) {
+            selectedDateFolder.value = surviving
+        }
+        showSnackbarMessage("روزهای کاری با موفقیت ادغام شدند")
+        return surviving
+    }
+
+    fun confirmMergeDateFolder() {
+        launchDb("confirmMergeDateFolder") {
+            confirmMergeDateFolderSync()
+        }
+    }
+
+    suspend fun confirmMergeDateFolderSync(): Boolean {
+        val pending = _pendingDateConflict.value ?: return false
+        _pendingDateConflict.value = null
+        val surviving = repository.mergeDateFolder(pending.requestedDateFolder)
+        if (selectedDateFolder.value?.id == pending.requestedDateFolder.id || selectedDateFolder.value?.id == surviving.id) {
+            selectedDateFolder.value = surviving
+        }
+        showSnackbarMessage("روزهای کاری با موفقیت ادغام شدند")
+        return true
+    }
+
+    fun dismissDateConflict() {
+        _pendingDateConflict.value = null
+    }
+
+    fun cancelDateConflict() {
+        dismissDateConflict()
     }
 
     fun deleteDateFolder(dateFolder: DateFolderEntity) {
@@ -554,166 +760,208 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         launchDb("updateAttendance") { repository.insertAttendance(attendance) }
     }
 
-    private fun AttendanceEntity.withPreservedAllowancesFrom(existing: AttendanceEntity): AttendanceEntity {
-        if (!existing.hasCustomAllowances) return this
-        return this.copy(
-            transitAllowance = existing.transitAllowance,
-            transitImpact = existing.transitImpact,
-            foodAllowance = existing.foodAllowance,
-            foodImpact = existing.foodImpact,
-            accommodationAllowance = existing.accommodationAllowance,
-            accommodationImpact = existing.accommodationImpact,
-            medicalAllowance = existing.medicalAllowance,
-            medicalImpact = existing.medicalImpact,
-            hasCustomAllowances = true
+    private fun AttendanceEntity.withPreservedAllowancesFrom(
+        worker: WorkerEntity,
+        existing: AttendanceEntity
+    ): AttendanceEntity {
+        val hasAnyAllowanceSet = existing.transitAllowance > 0L ||
+            existing.foodAllowance > 0L ||
+            existing.accommodationAllowance > 0L ||
+            existing.medicalAllowance > 0L
+        return if (existing.hasCustomAllowances || hasAnyAllowanceSet) {
+            this.copy(
+                transitAllowance = existing.transitAllowance,
+                transitImpact = existing.transitImpact,
+                foodAllowance = existing.foodAllowance,
+                foodImpact = existing.foodImpact,
+                accommodationAllowance = existing.accommodationAllowance,
+                accommodationImpact = existing.accommodationImpact,
+                medicalAllowance = existing.medicalAllowance,
+                medicalImpact = existing.medicalImpact,
+                hasCustomAllowances = existing.hasCustomAllowances || hasAnyAllowanceSet
+            )
+        } else {
+            this.copy(
+                transitAllowance = worker.transitAllowance,
+                transitImpact = worker.transitImpact,
+                foodAllowance = worker.foodAllowance,
+                foodImpact = worker.foodImpact,
+                accommodationAllowance = worker.accommodationAllowance,
+                accommodationImpact = worker.accommodationImpact,
+                medicalAllowance = worker.medicalAllowance,
+                medicalImpact = worker.medicalImpact,
+                hasCustomAllowances = false
+            )
+        }
+    }
+
+    private suspend fun performAttendanceDeleteSync(
+        workerName: String,
+        existing: AttendanceEntity
+    ) {
+        repository.deleteAttendance(existing)
+        recordUndoAndNotify(
+            undoState = AttendanceUndoState(
+                workerId = existing.workerId,
+                workerName = workerName,
+                date = existing.date,
+                previousAttendance = existing
+            ),
+            message = "رکورد حضور «$workerName» حذف شد"
         )
     }
 
-    fun setAttendanceStatus(worker: WorkerEntity, dateStr: String, status: String) {
-        val folder = currentFolder.value ?: return
+    fun setAttendanceStatus(
+        worker: WorkerEntity,
+        dateStr: String,
+        status: String,
+        forceDelete: Boolean = false
+    ) {
+        launchDb("setAttendanceStatus") {
+            setAttendanceStatusSync(
+                worker = worker,
+                dateStr = dateStr,
+                status = status,
+                forceDelete = forceDelete
+            )
+        }
+    }
+
+    suspend fun setAttendanceStatusSync(
+        worker: WorkerEntity,
+        dateStr: String,
+        status: String,
+        forceDelete: Boolean = false
+    ) {
+        val folder = currentFolder.value ?: repository.getFolderById(worker.folderId)
+        val folderId = folder?.id ?: worker.folderId
+        val workplaceName = folder?.name ?: ""
+        val foremanName = folder?.foremanName ?: ""
+        val employerName = folder?.employerName ?: ""
         val epochDay = JalaliCalendar.toEpochDay(dateStr)
         val activeDf = selectedDateFolder.value
         val dfId = if (activeDf?.date == dateStr) activeDf.id else 0L
+        val requestedStatus = WageCalculator.parseStatus(status)
 
-        launchDb("setAttendanceStatus") {
-            val existing = repository.getAttendanceForWorkerAndDate(worker.id, dateStr)
-            if (existing != null) {
-                when (status) {
-                    "FULL" -> {
-                        if (existing.status == AttendanceStatus.FULL_DAY) {
-                            // Already marked full present: toggle off (delete)
-                            repository.deleteAttendance(existing)
-                        } else {
-                            repository.updateAttendance(
-                                WageCalculator.defaultAttendanceFor(
-                                    worker = worker,
-                                    status = AttendanceStatus.FULL_DAY,
-                                    date = dateStr,
-                                    dateFolderId = existing.dateFolderId,
-                                    folderId = folder.id,
-                                    workplaceName = folder.name,
-                                    foremanName = folder.foremanName,
-                                    employerName = folder.employerName,
-                                    notes = existing.notes
-                                ).copy(id = existing.id, epochDay = epochDay)
-                                    .withPreservedAllowancesFrom(existing)
-                            )
-                        }
-                    }
-                    "HALF" -> {
-                        if (existing.status == AttendanceStatus.HALF_DAY) {
-                            // Already marked half day: toggle off (delete)
-                            repository.deleteAttendance(existing)
-                        } else {
-                            repository.updateAttendance(
-                                WageCalculator.defaultAttendanceFor(
-                                    worker = worker,
-                                    status = AttendanceStatus.HALF_DAY,
-                                    date = dateStr,
-                                    dateFolderId = existing.dateFolderId,
-                                    folderId = folder.id,
-                                    workplaceName = folder.name,
-                                    foremanName = folder.foremanName,
-                                    employerName = folder.employerName,
-                                    notes = existing.notes
-                                ).copy(id = existing.id, epochDay = epochDay)
-                                    .withPreservedAllowancesFrom(existing)
-                            )
-                        }
-                    }
-                    "HOURLY" -> {
-                        val isAlreadyHourly = existing.status == AttendanceStatus.HOURLY
-                        if (isAlreadyHourly) {
-                            // Toggle to absent
-                            repository.updateAttendance(
-                                WageCalculator.defaultAttendanceFor(
-                                    worker = worker,
-                                    status = AttendanceStatus.ABSENT,
-                                    date = dateStr,
-                                    dateFolderId = existing.dateFolderId,
-                                    folderId = folder.id,
-                                    workplaceName = folder.name,
-                                    foremanName = folder.foremanName,
-                                    employerName = folder.employerName,
-                                    notes = existing.notes
-                                ).copy(id = existing.id, epochDay = epochDay)
-                                    .withPreservedAllowancesFrom(existing)
-                            )
-                        } else {
-                            repository.updateAttendance(
-                                WageCalculator.defaultAttendanceFor(
-                                    worker = worker,
-                                    status = AttendanceStatus.HOURLY,
-                                    date = dateStr,
-                                    dateFolderId = existing.dateFolderId,
-                                    folderId = folder.id,
-                                    workplaceName = folder.name,
-                                    foremanName = folder.foremanName,
-                                    employerName = folder.employerName,
-                                    notes = existing.notes
-                                ).copy(id = existing.id, epochDay = epochDay)
-                                    .withPreservedAllowancesFrom(existing)
-                            )
-                        }
-                    }
-                    "ABSENT" -> {
-                        val isAlreadyAbsent = WageCalculator.isAbsent(worker, existing)
-                        if (isAlreadyAbsent) {
-                            val revertStatus = if (worker.isHourlyEnabled) AttendanceStatus.HOURLY else AttendanceStatus.FULL_DAY
-                            repository.updateAttendance(
-                                WageCalculator.defaultAttendanceFor(
-                                    worker = worker,
-                                    status = revertStatus,
-                                    date = dateStr,
-                                    dateFolderId = existing.dateFolderId,
-                                    folderId = folder.id,
-                                    workplaceName = folder.name,
-                                    foremanName = folder.foremanName,
-                                    employerName = folder.employerName,
-                                    notes = existing.notes
-                                ).copy(id = existing.id, epochDay = epochDay)
-                                    .withPreservedAllowancesFrom(existing)
-                            )
-                        } else {
-                            repository.updateAttendance(
-                                WageCalculator.defaultAttendanceFor(
-                                    worker = worker,
-                                    status = AttendanceStatus.ABSENT,
-                                    date = dateStr,
-                                    dateFolderId = existing.dateFolderId,
-                                    folderId = folder.id,
-                                    workplaceName = folder.name,
-                                    foremanName = folder.foremanName,
-                                    employerName = folder.employerName,
-                                    notes = existing.notes
-                                ).copy(id = existing.id, epochDay = epochDay)
-                                    .withPreservedAllowancesFrom(existing)
-                            )
-                        }
-                    }
+        val existing = repository.getAttendanceForWorkerAndDate(worker.id, dateStr)
+        if (existing != null) {
+            val isToggleOffDelete =
+                (requestedStatus == AttendanceStatus.FULL_DAY && existing.status == AttendanceStatus.FULL_DAY) ||
+                (requestedStatus == AttendanceStatus.HALF_DAY && existing.status == AttendanceStatus.HALF_DAY)
+
+            if (isToggleOffDelete) {
+                if (!forceDelete && WageCalculator.hasManualAttendanceValues(worker, existing)) {
+                    _pendingDeleteAttendance.value = PendingAttendanceDelete(
+                        worker = worker,
+                        attendance = existing,
+                        dateStr = dateStr
+                    )
+                } else {
+                    _pendingDeleteAttendance.value = null
+                    performAttendanceDeleteSync(worker.name, existing)
                 }
             } else {
-                val targetStatus = when (status) {
-                    "FULL" -> AttendanceStatus.FULL_DAY
-                    "HALF" -> AttendanceStatus.HALF_DAY
-                    "HOURLY" -> AttendanceStatus.HOURLY
-                    else -> AttendanceStatus.ABSENT
+                val targetStatus = when {
+                    requestedStatus == AttendanceStatus.HOURLY && existing.status == AttendanceStatus.HOURLY ->
+                        AttendanceStatus.ABSENT
+                    requestedStatus == AttendanceStatus.ABSENT && WageCalculator.isAbsent(worker, existing) ->
+                        if (worker.isHourlyEnabled) AttendanceStatus.HOURLY else AttendanceStatus.FULL_DAY
+                    else -> requestedStatus
                 }
-                repository.insertAttendance(
-                    WageCalculator.defaultAttendanceFor(
-                        worker = worker,
-                        status = targetStatus,
+                val baseForUpdate = existing.withPreservedAllowancesFrom(worker, existing).copy(
+                    id = existing.id,
+                    folderId = folderId,
+                    date = dateStr,
+                    epochDay = epochDay,
+                    workplaceName = workplaceName.ifBlank { existing.workplaceName },
+                    foremanName = foremanName.ifBlank { existing.foremanName },
+                    employerName = employerName.ifBlank { existing.employerName },
+                    notes = existing.notes
+                )
+                val updated = WageCalculator.applyStatusFields(
+                    attendance = baseForUpdate,
+                    worker = worker,
+                    targetStatus = targetStatus,
+                    preserveManualFields = true
+                )
+                repository.updateAttendance(updated)
+                recordUndoAndNotify(
+                    undoState = AttendanceUndoState(
+                        workerId = worker.id,
+                        workerName = worker.name,
                         date = dateStr,
-                        dateFolderId = dfId,
-                        folderId = folder.id,
-                        workplaceName = folder.name,
-                        foremanName = folder.foremanName,
-                        employerName = folder.employerName,
-                        notes = ""
-                    )
+                        previousAttendance = existing
+                    ),
+                    message = "وضعیت حضور «${worker.name}» تغییر کرد"
                 )
             }
+        } else {
+            repository.insertAttendance(
+                WageCalculator.defaultAttendanceFor(
+                    worker = worker,
+                    status = requestedStatus,
+                    date = dateStr,
+                    dateFolderId = dfId,
+                    folderId = folderId,
+                    workplaceName = workplaceName,
+                    foremanName = foremanName,
+                    employerName = employerName,
+                    notes = ""
+                )
+            )
+            recordUndoAndNotify(
+                undoState = AttendanceUndoState(
+                    workerId = worker.id,
+                    workerName = worker.name,
+                    date = dateStr,
+                    previousAttendance = null
+                ),
+                message = "وضعیت حضور «${worker.name}» ثبت شد"
+            )
         }
+    }
+
+    fun confirmDeleteAttendance() {
+        launchDb("confirmDeleteAttendance") {
+            confirmDeleteAttendanceSync()
+        }
+    }
+
+    suspend fun confirmDeleteAttendanceSync(): Boolean {
+        val pending = _pendingDeleteAttendance.value ?: return false
+        _pendingDeleteAttendance.value = null
+        performAttendanceDeleteSync(pending.worker.name, pending.attendance)
+        return true
+    }
+
+    fun dismissDeleteAttendance() {
+        _pendingDeleteAttendance.value = null
+    }
+
+    fun cancelDeleteAttendance() {
+        dismissDeleteAttendance()
+    }
+
+    fun undoLastAttendanceAction() {
+        launchDb("undoLastAttendanceAction") {
+            undoLastAttendanceActionSync()
+        }
+    }
+
+    suspend fun undoLastAttendanceActionSync(): Boolean {
+        val undo = synchronized(undoStack) {
+            val popped = undoStack.removeLastOrNull()
+            _lastUndoState.value = undoStack.lastOrNull()
+            popped
+        } ?: return false
+
+        if (undo.previousAttendance != null) {
+            repository.insertAttendance(undo.previousAttendance)
+        } else {
+            repository.deleteAttendanceForWorkerAndDate(undo.workerId, undo.date)
+        }
+        showSnackbarMessage("تغییرات حضور «${undo.workerName}» بازگردانی شد")
+        return true
     }
 
     fun toggleAttendanceStatus(worker: WorkerEntity, dateStr: String, isPresent: Boolean) {
@@ -721,13 +969,29 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteAttendance(attendance: AttendanceEntity) {
-        launchDb("deleteAttendance") { repository.deleteAttendance(attendance) }
+        launchDb("deleteAttendance") {
+            performAttendanceDeleteSync("کارگر", attendance)
+        }
     }
 
     fun removeWorkerFromDate(workerId: Long, date: String) {
         launchDb("removeWorkerFromDate") {
+            val existing = repository.getAttendanceForWorkerAndDate(workerId, date)
             repository.deleteAttendanceForWorkerAndDate(workerId, date)
-            showSnackbarMessage("کارگر از این روز کاری حذف شد")
+            if (existing != null) {
+                val workerName = workers.value.firstOrNull { it.id == workerId }?.name ?: "کارگر"
+                recordUndoAndNotify(
+                    undoState = AttendanceUndoState(
+                        workerId = workerId,
+                        workerName = workerName,
+                        date = date,
+                        previousAttendance = existing
+                    ),
+                    message = "کارگر از این روز کاری حذف شد"
+                )
+            } else {
+                showSnackbarMessage("کارگر از این روز کاری حذف شد")
+            }
         }
     }
 
@@ -751,21 +1015,73 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Expense Actions
     fun addExpense(expense: ExpenseEntity) {
-        val folder = currentFolder.value ?: return
         launchDb("addExpense") {
-            repository.insertExpense(
-                expense.copy(
-                    folderId = folder.id,
-                    workplaceName = folder.name,
-                    foremanName = folder.foremanName,
-                    employerName = folder.employerName
-                )
-            )
+            addExpenseSync(expense)
         }
     }
 
+    suspend fun addExpenseSync(expense: ExpenseEntity): Result<Long> {
+        val folder = currentFolder.value
+            ?: (if (expense.folderId > 0L) repository.getFolderById(expense.folderId) else null)
+            ?: run {
+                val msg = "ابتدا یک پروژه انتخاب کنید"
+                showSnackbarMessage(msg)
+                return Result.failure(IllegalStateException(msg))
+            }
+
+        val folderWorkers = repository.getWorkersByFolderSync(folder.id).ifEmpty { workers.value }
+        val workerMap = folderWorkers.associateBy { it.id }
+
+        val validationError = WageCalculator.validateExpense(
+            expense = expense,
+            availableWorkerIds = if (folderWorkers.isNotEmpty()) workerMap.keys else null
+        )
+        if (validationError != null) {
+            showSnackbarMessage(validationError)
+            return Result.failure(IllegalArgumentException(validationError))
+        }
+
+        val (y, m, d) = JalaliCalendar.parseDate(expense.date)
+        val normalizedDate = JalaliCalendar.formatDate(y, m, d)
+        val normalizedScope = expense.scope.trim().uppercase()
+        val normalizedCategory = expense.category.trim().uppercase()
+        val normalizedImpact = expense.impactType.trim().uppercase()
+        val resolvedWorkerId = if (normalizedScope == "INDIVIDUAL") expense.workerId else null
+        val resolvedWorkerName = if (normalizedScope == "INDIVIDUAL") {
+            resolvedWorkerId?.let { workerMap[it]?.name } ?: expense.workerName
+        } else {
+            null
+        }
+
+        val finalExpense = expense.copy(
+            folderId = folder.id,
+            title = expense.title.trim(),
+            category = normalizedCategory,
+            scope = normalizedScope,
+            impactType = normalizedImpact,
+            workerId = resolvedWorkerId,
+            workerName = resolvedWorkerName,
+            date = normalizedDate,
+            epochDay = JalaliCalendar.toEpochDay(normalizedDate),
+            workplaceName = folder.name,
+            foremanName = folder.foremanName,
+            employerName = folder.employerName,
+            notes = expense.notes.trim()
+        )
+        val id = repository.insertExpense(finalExpense)
+        showSnackbarMessage("هزینه «${finalExpense.title}» با موفقیت ثبت شد")
+        return Result.success(id)
+    }
+
     fun deleteExpense(expense: ExpenseEntity) {
-        launchDb("deleteExpense") { repository.deleteExpense(expense) }
+        launchDb("deleteExpense") {
+            deleteExpenseSync(expense)
+        }
+    }
+
+    suspend fun deleteExpenseSync(expense: ExpenseEntity) {
+        repository.deleteExpense(expense)
+        showSnackbarMessage("هزینه «${expense.title}» حذف شد")
     }
 
     fun loadSampleData(clearFirst: Boolean = false) {
@@ -791,3 +1107,29 @@ class WorkerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 }
+
+data class SnackbarEvent(
+    val message: String,
+    val actionLabel: String? = null,
+    val withUndo: Boolean = false
+)
+
+data class PendingAttendanceDelete(
+    val worker: WorkerEntity,
+    val attendance: AttendanceEntity,
+    val dateStr: String
+)
+
+data class PendingDateConflict(
+    val requestedDateFolder: DateFolderEntity,
+    val targetDate: String,
+    val conflictingWorkers: List<WorkerEntity>,
+    val message: String = DateConflictException.buildMessage(conflictingWorkers.size)
+)
+
+data class AttendanceUndoState(
+    val workerId: Long,
+    val workerName: String,
+    val date: String,
+    val previousAttendance: AttendanceEntity?
+)

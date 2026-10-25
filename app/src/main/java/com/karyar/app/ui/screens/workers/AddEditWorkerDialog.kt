@@ -296,6 +296,62 @@ fun AddEditWorkerDialog(
 
     var showUnsavedAlert by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
+    var nameTouched by remember { mutableStateOf(false) }
+    var ignoreNationalIdWarning by remember {
+        mutableStateOf(
+            initialWorker?.nationalId?.isNotBlank() == true &&
+                !Formatters.isValidIranianNationalId(initialWorker.nationalId)
+        )
+    }
+
+    val nameError = Formatters.validateRequiredName(name, "نام کارگر")
+    val roleError = Formatters.validateOptionalName(role, "عنوان شغل")
+    val nationalIdError = if (isNationalIdEnabled) {
+        Formatters.validateIranianNationalId(nationalId, allowEmpty = true)
+    } else null
+    val hasBlockingNationalIdError = isNationalIdEnabled && nationalIdError != null && !ignoreNationalIdWarning
+
+    val dailyWageError = if (isDailyWageEnabled) {
+        Formatters.validateWageInput(baseDailyWage, "دستمزد روزانه")
+    } else null
+    val hourlyRateError = if (isHourlyEnabled) {
+        Formatters.validateWageInput(hourlyWageRate, "نرخ دستمزد ساعتی")
+    } else null
+    val hourlyHoursError = if (isHourlyEnabled) {
+        Formatters.validateHoursInput(hourlyHours, "ساعت کار ساعتی", Formatters.MAX_HOURLY_HOURS)
+    } else null
+    val overtimeRateError = if (isOvertimeEnabled) {
+        Formatters.validateWageInput(overtimeRate, "نرخ اضافه‌کاری")
+    } else null
+    val overtimeHoursError = if (isOvertimeEnabled) {
+        Formatters.validateHoursInput(overtimeHours, "ساعت اضافه‌کاری", Formatters.MAX_OVERTIME_HOURS)
+    } else null
+
+    val transitError = if (transitEnabled) {
+        Formatters.validateWageInput(transitAllowance, "کمک‌هزینه ایاب و ذهاب")
+    } else null
+    val accomError = if (accommodationEnabled) {
+        Formatters.validateWageInput(accommodationAllowance, "کمک‌هزینه مسکن")
+    } else null
+    val foodError = if (foodEnabled) {
+        Formatters.validateWageInput(foodAllowance, "کمک‌هزینه خوراک")
+    } else null
+    val medError = if (medicalEnabled) {
+        Formatters.validateWageInput(medicalAllowance, "کمک‌هزینه درمان")
+    } else null
+
+    val isFormValid = nameError == null &&
+        roleError == null &&
+        !hasBlockingNationalIdError &&
+        dailyWageError == null &&
+        hourlyRateError == null &&
+        hourlyHoursError == null &&
+        overtimeRateError == null &&
+        overtimeHoursError == null &&
+        transitError == null &&
+        accomError == null &&
+        foodError == null &&
+        medError == null
 
     fun handleRequestClose() {
         if (isModified) {
@@ -306,7 +362,8 @@ fun AddEditWorkerDialog(
     }
 
     fun saveWorker() {
-        if (name.isNotBlank()) {
+        nameTouched = true
+        if (isFormValid && name.isNotBlank()) {
             isSaving = true
             val parsedDailyWage = if (isDailyWageEnabled) Formatters.parsePrice(baseDailyWage) else 0L
             val parsedHourlyRate = if (isHourlyEnabled) Formatters.parsePrice(hourlyWageRate) else 0L
@@ -448,13 +505,27 @@ fun AddEditWorkerDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Name & Role compactly stacked
+                val showNameError = nameError != null && (nameTouched || name.isNotEmpty())
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = {
+                        name = it
+                        nameTouched = true
+                    },
                     label = { Text("نام کارگر", fontSize = 12.sp) },
                     leadingIcon = {
                         Icon(Icons.Default.Person, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(16.dp))
                     },
+                    isError = showNameError,
+                    supportingText = if (showNameError) {
+                        {
+                            Text(
+                                text = nameError!!,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("worker_name_input"),
@@ -500,7 +571,19 @@ fun AddEditWorkerDialog(
                     leadingIcon = {
                         Icon(Icons.Default.Engineering, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    isError = roleError != null,
+                    supportingText = if (roleError != null) {
+                        {
+                            Text(
+                                text = roleError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("worker_role_input"),
                     singleLine = true
                 )
 
@@ -533,11 +616,18 @@ fun AddEditWorkerDialog(
                     onValueChange = { input ->
                         val digitsOnly = Formatters.toEnglishDigits(input).filter { it.isDigit() }.take(10)
                         nationalId = digitsOnly
+                        if (Formatters.validateIranianNationalId(digitsOnly, allowEmpty = true) == null) {
+                            ignoreNationalIdWarning = false
+                        }
                     },
                     icon = Icons.Default.Badge,
                     accentColor = IndigoAccent,
                     placeholder = "0012345678",
-                    testTag = "worker_national_id_input"
+                    testTag = "worker_national_id_input",
+                    errorMessage = nationalIdError,
+                    isWarningDismissed = ignoreNationalIdWarning,
+                    onDismissWarningChange = { ignoreNationalIdWarning = it },
+                    dismissWarningLabel = "کارگر اتباع خارجی است (ثبت بدون کد ملی ایران)"
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -547,7 +637,8 @@ fun AddEditWorkerDialog(
                     isDailyWageEnabled = isDailyWageEnabled,
                     onDailyWageEnabledChange = { isDailyWageEnabled = it },
                     baseDailyWage = baseDailyWage,
-                    onBaseDailyWageChange = { baseDailyWage = it }
+                    onBaseDailyWageChange = { baseDailyWage = it },
+                    dailyWageError = dailyWageError
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -559,7 +650,9 @@ fun AddEditWorkerDialog(
                     hourlyWageRate = hourlyWageRate,
                     onHourlyWageRateChange = { hourlyWageRate = it },
                     hourlyHours = hourlyHours,
-                    onHourlyHoursChange = { hourlyHours = it }
+                    onHourlyHoursChange = { hourlyHours = it },
+                    hourlyRateError = hourlyRateError,
+                    hourlyHoursError = hourlyHoursError
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -571,7 +664,9 @@ fun AddEditWorkerDialog(
                     overtimeRate = overtimeRate,
                     onOvertimeRateChange = { overtimeRate = it },
                     overtimeHours = overtimeHours,
-                    onOvertimeHoursChange = { overtimeHours = it }
+                    onOvertimeHoursChange = { overtimeHours = it },
+                    overtimeRateError = overtimeRateError,
+                    overtimeHoursError = overtimeHoursError
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -694,6 +789,7 @@ fun AddEditWorkerDialog(
                         icon = if (initialWorker == null) Icons.Default.PersonAdd else Icons.Default.Save,
                         onClick = { saveWorker() },
                         isLoading = isSaving,
+                        enabled = isFormValid,
                         modifier = Modifier.weight(1.3f),
                         containerColor = AmberAccent,
                         height = 42.dp,
@@ -727,6 +823,7 @@ fun AddEditWorkerDialog(
                         showUnsavedAlert = false
                         saveWorker()
                     },
+                    enabled = isFormValid,
                     containerColor = AmberAccent,
                     height = 38.dp,
                     fontSize = 12.sp
@@ -743,3 +840,4 @@ fun AddEditWorkerDialog(
         )
     }
 }
+

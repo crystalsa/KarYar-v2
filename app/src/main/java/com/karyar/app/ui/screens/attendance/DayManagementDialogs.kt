@@ -45,7 +45,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.karyar.app.data.local.entity.AttendanceEntity
 import com.karyar.app.data.local.entity.DateFolderEntity
+import com.karyar.app.data.local.entity.WorkerEntity
+import com.karyar.app.data.repository.DateConflictException
 import com.karyar.app.ui.components.HairlineCard
 import com.karyar.app.ui.components.IconicsBox
 import com.karyar.app.ui.components.IconicsSize
@@ -223,14 +226,46 @@ fun DayActionOptionsDialog(
 @Composable
 fun EditDateFolderDialog(
     dateFolder: DateFolderEntity,
+    existingAttendances: List<AttendanceEntity> = emptyList(),
+    workers: List<WorkerEntity> = emptyList(),
+    conflictError: String? = null,
+    conflictingWorkerNames: List<String> = emptyList(),
+    onMergeConflict: ((date: String, dayOfWeek: String, title: String) -> Unit)? = null,
     onDismiss: () -> Unit,
     onConfirm: (date: String, dayOfWeek: String, title: String) -> Unit
 ) {
     var date by remember(dateFolder) { mutableStateOf(dateFolder.date) }
     var dayOfWeek by remember(dateFolder) { mutableStateOf(dateFolder.dayOfWeek) }
     var title by remember(dateFolder) { mutableStateOf(dateFolder.title) }
+    var dateError by remember(dateFolder) { mutableStateOf<String?>(JalaliCalendar.validateDateError(dateFolder.date)) }
+    var detectedConflictMessage by remember(conflictError) { mutableStateOf(conflictError) }
+    var detectedConflictWorkerNames by remember(conflictingWorkerNames) { mutableStateOf(conflictingWorkerNames) }
 
-    val (year, month, day) = JalaliCalendar.parseDate(date)
+    fun findConflictingWorkersForTarget(targetNormalizedDate: String): List<String>? {
+        if (targetNormalizedDate == dateFolder.date || existingAttendances.isEmpty()) return null
+        val sourceAtts = existingAttendances.filter {
+            it.dateFolderId == dateFolder.id || (it.folderId == dateFolder.folderId && it.date == dateFolder.date)
+        }
+        val sourceIds = sourceAtts.map { it.id }.toSet()
+        val sourceWorkerIds = sourceAtts.map { it.workerId }.toSet()
+        val directConflicts = existingAttendances.filter {
+            it.date == targetNormalizedDate && it.id !in sourceIds && it.workerId in sourceWorkerIds
+        }
+        val folderConflicts = existingAttendances.filter {
+            it.date == targetNormalizedDate && it.id !in sourceIds && it.folderId == dateFolder.folderId
+        }
+        val conflicts = if (directConflicts.isNotEmpty()) directConflicts else folderConflicts
+        if (conflicts.isEmpty()) return null
+        val workerById = workers.associateBy { it.id }
+        val distinctIds = conflicts.map { it.workerId }.distinct()
+        return distinctIds.map { wId -> workerById[wId]?.name ?: "کارگر" }
+    }
+
+    val fallbackToday = remember { JalaliCalendar.today() }
+    val parsedDate = JalaliCalendar.parseDateOrNull(date)
+    val year = parsedDate?.first ?: fallbackToday.year
+    val month = parsedDate?.second ?: fallbackToday.month
+    val day = parsedDate?.third ?: fallbackToday.day
     val monthName = JalaliCalendar.getMonthName(month)
     val daysInCurrentMonth = JalaliCalendar.getDaysInMonth(year, month)
     val isLeap = JalaliCalendar.isLeapYear(year)
@@ -295,9 +330,15 @@ fun EditDateFolderDialog(
                             .weight(1.2f)
                             .clip(RoundedCornerShape(10.dp))
                             .clickable {
-                                val (nextD, nextDow) = JalaliCalendar.nextDay(date)
-                                date = nextD
-                                dayOfWeek = nextDow
+                                val err = JalaliCalendar.validateDateError(date)
+                                if (err == null) {
+                                    val (nextD, nextDow) = JalaliCalendar.nextDay(date)
+                                    date = nextD
+                                    dayOfWeek = nextDow
+                                    dateError = null
+                                } else {
+                                    dateError = err
+                                }
                             }
                     ) {
                         Row(
@@ -329,9 +370,15 @@ fun EditDateFolderDialog(
                             .weight(1f)
                             .clip(RoundedCornerShape(10.dp))
                             .clickable {
-                                val (prevD, prevDow) = JalaliCalendar.previousDay(date)
-                                date = prevD
-                                dayOfWeek = prevDow
+                                val err = JalaliCalendar.validateDateError(date)
+                                if (err == null) {
+                                    val (prevD, prevDow) = JalaliCalendar.previousDay(date)
+                                    date = prevD
+                                    dayOfWeek = prevDow
+                                    dateError = null
+                                } else {
+                                    dateError = err
+                                }
                             }
                     ) {
                         Row(
@@ -364,6 +411,7 @@ fun EditDateFolderDialog(
                             .clickable {
                                 date = JalaliCalendar.todayString()
                                 dayOfWeek = JalaliCalendar.todayDayOfWeek()
+                                dateError = null
                             }
                     ) {
                         Row(
@@ -412,16 +460,22 @@ fun EditDateFolderDialog(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable {
-                                    val currentIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dayOfWeek).let { if (it == -1) 0 else it }
-                                    val targetIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dow).let { if (it == -1) 0 else it }
-                                    var diff = targetIdx - currentIdx
-                                    if (diff < 0) diff += 7
-                                    if (diff > 0) {
-                                        val (newD, newDow) = JalaliCalendar.addDays(date, diff)
-                                        date = newD
-                                        dayOfWeek = newDow
+                                    val err = JalaliCalendar.validateDateError(date)
+                                    if (err == null) {
+                                        val currentIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dayOfWeek).let { if (it == -1) 0 else it }
+                                        val targetIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dow).let { if (it == -1) 0 else it }
+                                        var diff = targetIdx - currentIdx
+                                        if (diff < 0) diff += 7
+                                        if (diff > 0) {
+                                            val (newD, newDow) = JalaliCalendar.addDays(date, diff)
+                                            date = newD
+                                            dayOfWeek = newDow
+                                        } else {
+                                            dayOfWeek = dow
+                                        }
+                                        dateError = null
                                     } else {
-                                        dayOfWeek = dow
+                                        dateError = err
                                     }
                                 }
                         ) {
@@ -568,10 +622,22 @@ fun EditDateFolderDialog(
                         if (month == 12 && isLeap) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "سال $year کبیسه است (اسفند ۳۰ روزه)",
+                                text = "سال ${Formatters.toPersianDigits(year)} کبیسه است (اسفند ۳۰ روزه)",
                                 fontSize = 10.5.sp,
                                 color = EmeraldAccent,
                                 fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        val activeError = detectedConflictMessage ?: dateError
+                        if (activeError != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = activeError,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -580,13 +646,92 @@ fun EditDateFolderDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Title
+                val titleError = Formatters.validateOptionalName(title, "عنوان روز کاری")
+                val isEditValid = dateError == null && titleError == null && detectedConflictMessage == null
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
                     label = { Text("عنوان یا توضیح روز", fontSize = 11.sp) },
-                    modifier = Modifier.fillMaxWidth(),
+                    isError = titleError != null,
+                    supportingText = if (titleError != null) {
+                        {
+                            Text(
+                                text = titleError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_date_folder_title_input"),
                     singleLine = true
                 )
+
+                if (detectedConflictMessage != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = RoseAccent.copy(alpha = 0.1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("edit_date_conflict_warning_box")
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = detectedConflictMessage!!,
+                                color = RoseAccent,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                            if (detectedConflictWorkerNames.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "کارگران دارای تداخل: ${detectedConflictWorkerNames.joinToString("، ")}",
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            if (onMergeConflict != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    LoadingOutlinedButton(
+                                        text = "لغو",
+                                        onClick = {
+                                            detectedConflictMessage = null
+                                            detectedConflictWorkerNames = emptyList()
+                                            onDismiss()
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("cancel_merge_date_folder_button"),
+                                        height = 36.dp,
+                                        fontSize = 11.5.sp
+                                    )
+                                    LoadingButton(
+                                        text = "ادغام",
+                                        onClick = {
+                                            val parsed = JalaliCalendar.parseDateOrNull(date)
+                                            if (parsed != null && titleError == null) {
+                                                val normalizedDate = JalaliCalendar.formatDate(parsed.first, parsed.second, parsed.third)
+                                                onMergeConflict(normalizedDate, dayOfWeek, title)
+                                            }
+                                        },
+                                        enabled = titleError == null,
+                                        modifier = Modifier.weight(1f),
+                                        containerColor = AmberAccent,
+                                        height = 36.dp,
+                                        fontSize = 11.5.sp,
+                                        testTag = "confirm_merge_date_folder_button"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -604,7 +749,25 @@ fun EditDateFolderDialog(
                     LoadingButton(
                         text = "ذخیره",
                         icon = Icons.Default.Edit,
-                        onClick = { onConfirm(date, dayOfWeek, title) },
+                        onClick = {
+                            val err = JalaliCalendar.validateDateError(date)
+                            if (err != null) {
+                                dateError = err
+                            } else if (titleError == null) {
+                                val (y, m, d) = JalaliCalendar.parseDate(date)
+                                val normalizedDate = JalaliCalendar.formatDate(y, m, d)
+                                val conflictingNames = findConflictingWorkersForTarget(normalizedDate)
+                                if (!conflictingNames.isNullOrEmpty()) {
+                                    val msg = DateConflictException.buildMessage(conflictingNames.size)
+                                    detectedConflictMessage = msg
+                                    detectedConflictWorkerNames = conflictingNames
+                                    dateError = msg
+                                } else {
+                                    onConfirm(normalizedDate, dayOfWeek, title)
+                                }
+                            }
+                        },
+                        enabled = isEditValid,
                         modifier = Modifier.weight(1.3f),
                         containerColor = AmberAccent,
                         height = 42.dp,
@@ -614,6 +777,70 @@ fun EditDateFolderDialog(
             }
         }
     }
+}
+
+
+@Composable
+fun DateConflictDialog(
+    message: String,
+    targetDate: String,
+    conflictingWorkerNames: List<String>,
+    onDismiss: () -> Unit,
+    onMerge: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "تداخل در تاریخ مقصد",
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = message,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = RoseAccent
+                )
+                if (conflictingWorkerNames.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "کارگران ثبت‌شده در ${Formatters.toPersianDigits(targetDate)}: ${conflictingWorkerNames.joinToString("، ")}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "می‌توانید اطلاعات این روز کاری را با تاریخ مقصد ادغام کنید یا عملیات را لغو نمایید.",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        },
+        confirmButton = {
+            LoadingButton(
+                text = "ادغام",
+                onClick = onMerge,
+                containerColor = AmberAccent,
+                height = 38.dp,
+                fontSize = 12.sp,
+                testTag = "dialog_confirm_merge_date_folder_button"
+            )
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("dialog_cancel_merge_date_folder_button")
+            ) {
+                Text("لغو", fontSize = 12.5.sp)
+            }
+        }
+    )
 }
 
 /**

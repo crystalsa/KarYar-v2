@@ -38,6 +38,9 @@ fun WorkerDailyWageSection(
     onDailyWageEnabledChange: (Boolean) -> Unit,
     baseDailyWage: String,
     onBaseDailyWageChange: (String) -> Unit,
+    dailyWageError: String? = if (isDailyWageEnabled) {
+        Formatters.validateWageInput(baseDailyWage, fieldLabel = "دستمزد روزانه")
+    } else null,
     modifier: Modifier = Modifier
 ) {
     val parsedDailyWageVal = Formatters.parsePrice(baseDailyWage)
@@ -72,7 +75,7 @@ fun WorkerDailyWageSection(
                         color = if (isDailyWageEnabled) AmberAccent else MaterialTheme.colorScheme.onSurface
                     )
                 }
-                if (isDailyWageEnabled && baseDailyWage.isNotBlank()) {
+                if (isDailyWageEnabled && baseDailyWage.isNotBlank() && dailyWageError == null) {
                     Text(
                         text = Formatters.formatCurrency(parsedDailyWageVal),
                         fontSize = 11.sp,
@@ -91,6 +94,16 @@ fun WorkerDailyWageSection(
                         label = { Text("دستمزد روزانه ثابت (تومان)", fontSize = 11.sp) },
                         placeholder = { Text("مثلاً ۱,۲۰۰,۰۰۰ یا ۰", fontSize = 11.sp) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = dailyWageError != null,
+                        supportingText = if (dailyWageError != null) {
+                            {
+                                Text(
+                                    text = dailyWageError,
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 10.5.sp
+                                )
+                            }
+                        } else null,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("daily_wage_input"),
@@ -110,12 +123,26 @@ fun WorkerHourlyWageSection(
     onHourlyWageRateChange: (String) -> Unit,
     hourlyHours: String,
     onHourlyHoursChange: (String) -> Unit,
+    hourlyRateError: String? = if (isHourlyEnabled) {
+        Formatters.validateWageInput(hourlyWageRate, fieldLabel = "نرخ دستمزد ساعتی")
+    } else null,
+    hourlyHoursError: String? = if (isHourlyEnabled) {
+        Formatters.validateHoursInput(hourlyHours, fieldLabel = "ساعت کار ساعتی", maxHours = Formatters.MAX_HOURLY_HOURS)
+    } else null,
     modifier: Modifier = Modifier
 ) {
     val parsedHourlyRateVal = Formatters.parsePrice(hourlyWageRate)
     val parsedHourlyHoursVal = Formatters.parseDouble(hourlyHours)
-    val hourlyTotal = if (isHourlyEnabled && parsedHourlyRateVal > 0 && parsedHourlyHoursVal > 0) {
-        (parsedHourlyRateVal * parsedHourlyHoursVal).toLong()
+    val hourlyTotal = if (
+        isHourlyEnabled &&
+        hourlyRateError == null &&
+        hourlyHoursError == null &&
+        parsedHourlyRateVal > 0 &&
+        parsedHourlyHoursVal > 0
+    ) {
+        runCatching {
+            Math.round(parsedHourlyRateVal * parsedHourlyHoursVal)
+        }.getOrDefault(0L)
     } else 0L
 
     HairlineCard(
@@ -148,7 +175,7 @@ fun WorkerHourlyWageSection(
                         color = if (isHourlyEnabled) CyanAccent else MaterialTheme.colorScheme.onSurface
                     )
                 }
-                if (isHourlyEnabled && (hourlyWageRate.isNotBlank() || hourlyHours.isNotBlank())) {
+                if (isHourlyEnabled && hourlyRateError == null && hourlyHoursError == null && (hourlyWageRate.isNotBlank() || hourlyHours.isNotBlank())) {
                     Text(
                         text = "جمع: ${Formatters.formatCurrency(hourlyTotal)}",
                         fontSize = 11.sp,
@@ -171,6 +198,16 @@ fun WorkerHourlyWageSection(
                             label = { Text("مبلغ هر ساعت (تومان)", fontSize = 11.sp) },
                             placeholder = { Text("۱۵۰,۰۰۰ یا ۰", fontSize = 11.sp) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            isError = hourlyRateError != null,
+                            supportingText = if (hourlyRateError != null) {
+                                {
+                                    Text(
+                                        text = hourlyRateError,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            } else null,
                             modifier = Modifier
                                 .weight(1.2f)
                                 .testTag("hourly_rate_input"),
@@ -188,6 +225,16 @@ fun WorkerHourlyWageSection(
                             label = { Text("تعداد ساعت کار", fontSize = 11.sp) },
                             placeholder = { Text("۸ یا ۰", fontSize = 11.sp) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            isError = hourlyHoursError != null,
+                            supportingText = if (hourlyHoursError != null) {
+                                {
+                                    Text(
+                                        text = hourlyHoursError,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            } else null,
                             modifier = Modifier
                                 .weight(0.8f)
                                 .testTag("hourly_hours_input"),
@@ -208,12 +255,26 @@ fun WorkerOvertimeSection(
     onOvertimeRateChange: (String) -> Unit,
     overtimeHours: String,
     onOvertimeHoursChange: (String) -> Unit,
+    overtimeRateError: String? = if (isOvertimeEnabled) {
+        Formatters.validateWageInput(overtimeRate, fieldLabel = "نرخ اضافه‌کاری")
+    } else null,
+    overtimeHoursError: String? = if (isOvertimeEnabled) {
+        Formatters.validateHoursInput(overtimeHours, fieldLabel = "ساعت اضافه‌کاری", maxHours = Formatters.MAX_OVERTIME_HOURS)
+    } else null,
     modifier: Modifier = Modifier
 ) {
     val parsedOtRateVal = Formatters.parsePrice(overtimeRate)
     val parsedOtHoursVal = Formatters.parseDouble(overtimeHours)
-    val overtimeTotal = if (isOvertimeEnabled && parsedOtRateVal > 0 && parsedOtHoursVal > 0) {
-        (parsedOtRateVal * parsedOtHoursVal).toLong()
+    val overtimeTotal = if (
+        isOvertimeEnabled &&
+        overtimeRateError == null &&
+        overtimeHoursError == null &&
+        parsedOtRateVal > 0 &&
+        parsedOtHoursVal > 0
+    ) {
+        runCatching {
+            Math.round(parsedOtRateVal * parsedOtHoursVal)
+        }.getOrDefault(0L)
     } else 0L
 
     HairlineCard(
@@ -246,7 +307,7 @@ fun WorkerOvertimeSection(
                         color = if (isOvertimeEnabled) AmberAccent else MaterialTheme.colorScheme.onSurface
                     )
                 }
-                if (isOvertimeEnabled && (overtimeRate.isNotBlank() || overtimeHours.isNotBlank())) {
+                if (isOvertimeEnabled && overtimeRateError == null && overtimeHoursError == null && (overtimeRate.isNotBlank() || overtimeHours.isNotBlank())) {
                     Text(
                         text = "جمع: ${Formatters.formatCurrency(overtimeTotal)}",
                         fontSize = 11.sp,
@@ -269,6 +330,16 @@ fun WorkerOvertimeSection(
                             label = { Text("نرخ اضافه کار (تومان)", fontSize = 11.sp) },
                             placeholder = { Text("نرخ هر ساعت یا ۰", fontSize = 11.sp) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            isError = overtimeRateError != null,
+                            supportingText = if (overtimeRateError != null) {
+                                {
+                                    Text(
+                                        text = overtimeRateError,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            } else null,
                             modifier = Modifier
                                 .weight(1.2f)
                                 .testTag("overtime_rate_input"),
@@ -286,6 +357,16 @@ fun WorkerOvertimeSection(
                             label = { Text("ساعت اضافه", fontSize = 11.sp) },
                             placeholder = { Text("۲ یا ۰", fontSize = 11.sp) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            isError = overtimeHoursError != null,
+                            supportingText = if (overtimeHoursError != null) {
+                                {
+                                    Text(
+                                        text = overtimeHoursError,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            } else null,
                             modifier = Modifier
                                 .weight(0.8f)
                                 .testTag("overtime_hours_input"),
@@ -297,3 +378,4 @@ fun WorkerOvertimeSection(
         }
     }
 }
+

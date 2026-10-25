@@ -20,10 +20,33 @@ import com.karyar.app.data.local.entity.DateFolderEntity
 import com.karyar.app.data.local.entity.ExpenseEntity
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
+import com.karyar.app.util.Formatters
 import com.karyar.app.util.JalaliCalendar
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+
+data class MigrationReport(
+    val deletedDuplicatesCount: Int,
+    val deletedOrphansCount: Int,
+    val orphanBreakdown: String = "",
+    val backupFilePath: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
+) {
+    val hasDeletedRows: Boolean
+        get() = deletedDuplicatesCount > 0 || deletedOrphansCount > 0
+
+    fun formatDialogMessage(): String {
+        val nStr = Formatters.toPersianDigits(deletedDuplicatesCount)
+        val mStr = Formatters.toPersianDigits(deletedOrphansCount)
+        return "در به‌روزرسانی داده‌ها $nStr رکورد حضور تکراری و $mStr رکورد ناسازگار حذف شد"
+    }
+}
 
 @Database(
     entities = [
@@ -33,7 +56,7 @@ import java.util.concurrent.atomic.AtomicLong
         AttendanceEntity::class,
         ExpenseEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -47,13 +70,196 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         private const val TAG = "AppDatabase"
         const val DB_NAME = "worker_management_db"
-        const val CURRENT_DB_VERSION = 7
+        const val CURRENT_DB_VERSION = 8
         const val BACKUP_DIR_NAME = "db_backups"
         const val MAX_BACKUPS = 3
+        const val MIGRATION_PREFS_NAME = "migration_report"
+        const val KEY_HAS_PENDING_REPORT = "has_pending_report"
+        const val KEY_DELETED_DUPLICATES_COUNT = "deleted_duplicates_count"
+        const val KEY_DELETED_ORPHANS_COUNT = "deleted_orphans_count"
+        const val KEY_ORPHAN_BREAKDOWN = "orphan_breakdown"
+        const val KEY_DELETED_ROWS_BACKUP_PATH = "deleted_rows_backup_path"
+        const val KEY_REPORT_MESSAGE = "message"
+        const val KEY_REPORT_TIMESTAMP = "timestamp"
+        const val DELETED_ROWS_FILE_PREFIX = "migration_5_6_deleted_rows_"
         private val backupSeq = AtomicLong(0L)
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        @Volatile
+        private var appContext: Context? = null
+
+        private val _migrationReportFlow = MutableStateFlow<MigrationReport?>(null)
+        val migrationReportFlow: StateFlow<MigrationReport?> = _migrationReportFlow.asStateFlow()
+
+        private fun resolveMigrationContext(): Context? {
+            try {
+                val roboClass = Class.forName("org.robolectric.RuntimeEnvironment")
+                val getApp = roboClass.getDeclaredMethod("getApplication")
+                val roboApp = getApp.invoke(null) as? Context
+                if (roboApp != null) return roboApp
+            } catch (_: Throwable) {
+            }
+            try {
+                val clazz = Class.forName("android.app.ActivityThread")
+                val method = clazz.getDeclaredMethod("currentApplication")
+                val currentApp = (method.invoke(null) as? Context)?.applicationContext
+                if (currentApp != null) return currentApp
+            } catch (_: Throwable) {
+            }
+            return appContext
+        }
+
+        private fun queryRowsForBackup(
+            db: SupportSQLiteDatabase,
+            sql: String,
+            args: Array<Any>,
+            reason: String,
+            table: String
+        ): List<JSONObject> {
+            val result = mutableListOf<JSONObject>()
+            val cursor = db.query(sql, args)
+            try {
+                val columnNames = cursor.columnNames
+                while (cursor.moveToNext()) {
+                    val obj = JSONObject()
+                    obj.put("reason", reason)
+                    obj.put("table", table)
+                    for (i in columnNames.indices) {
+                        val colName = columnNames[i]
+                        when (cursor.getType(i)) {
+                            android.database.Cursor.FIELD_TYPE_NULL -> obj.put(colName, JSONObject.NULL)
+                            android.database.Cursor.FIELD_TYPE_INTEGER -> obj.put(colName, cursor.getLong(i))
+                            android.database.Cursor.FIELD_TYPE_FLOAT -> obj.put(colName, cursor.getDouble(i))
+                            android.database.Cursor.FIELD_TYPE_STRING -> obj.put(colName, cursor.getString(i))
+                            android.database.Cursor.FIELD_TYPE_BLOB -> obj.put(colName, cursor.getBlob(i)?.size ?: 0)
+                        }
+                    }
+                    result.add(obj)
+                }
+            } finally {
+                cursor.close()
+            }
+            return result
+        }
+
+        private fun writeDeletedRowsBackupFile(
+            existingFile: File?,
+            duplicateRows: List<JSONObject>,
+            orphanRows: List<JSONObject>,
+            orphanBreakdown: Map<String, Int>
+        ): File? {
+            val context = resolveMigrationContext() ?: return null
+            return try {
+                val backupDir = File(context.filesDir, BACKUP_DIR_NAME)
+                if (!backupDir.exists() && !backupDir.mkdirs()) {
+                    Log.w(TAG, "Could not create backup directory for deleted migration rows: ${backupDir.absolutePath}")
+                    return null
+                }
+                val targetFile = existingFile ?: File(
+                    backupDir,
+                    String.format(
+                        Locale.US,
+                        "%s%013d_%06d.json",
+                        DELETED_ROWS_FILE_PREFIX,
+                        System.currentTimeMillis(),
+                        backupSeq.incrementAndGet()
+                    )
+                )
+                val root = JSONObject()
+                root.put("migration", "5_6")
+                root.put("timestamp", System.currentTimeMillis())
+                root.put("deletedDuplicatesCount", duplicateRows.size)
+                root.put("deletedOrphansCount", orphanRows.size)
+                val breakdownJson = JSONObject()
+                for ((table, count) in orphanBreakdown) {
+                    breakdownJson.put(table, count)
+                }
+                root.put("orphanBreakdown", breakdownJson)
+
+                val rowsArray = JSONArray()
+                duplicateRows.forEach { rowsArray.put(it) }
+                orphanRows.forEach { rowsArray.put(it) }
+                root.put("deletedRows", rowsArray)
+
+                targetFile.writeText(root.toString(2), Charsets.UTF_8)
+                targetFile
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed to write deleted migration rows backup file", t)
+                existingFile
+            }
+        }
+
+        internal fun saveMigrationReport(
+            deletedDuplicatesCount: Int,
+            deletedOrphansCount: Int,
+            orphanBreakdown: String,
+            backupFilePath: String?,
+            context: Context? = resolveMigrationContext()
+        ) {
+            val hasDeleted = deletedDuplicatesCount > 0 || deletedOrphansCount > 0
+            val report = MigrationReport(
+                deletedDuplicatesCount = deletedDuplicatesCount,
+                deletedOrphansCount = deletedOrphansCount,
+                orphanBreakdown = orphanBreakdown,
+                backupFilePath = backupFilePath,
+                timestamp = System.currentTimeMillis()
+            )
+            if (context != null) {
+                try {
+                    val prefs = context.getSharedPreferences(MIGRATION_PREFS_NAME, Context.MODE_PRIVATE)
+                    prefs.edit()
+                        .putBoolean(KEY_HAS_PENDING_REPORT, hasDeleted)
+                        .putInt(KEY_DELETED_DUPLICATES_COUNT, deletedDuplicatesCount)
+                        .putInt(KEY_DELETED_ORPHANS_COUNT, deletedOrphansCount)
+                        .putString(KEY_ORPHAN_BREAKDOWN, orphanBreakdown)
+                        .putString(KEY_DELETED_ROWS_BACKUP_PATH, backupFilePath ?: "")
+                        .putString(KEY_REPORT_MESSAGE, report.formatDialogMessage())
+                        .putLong(KEY_REPORT_TIMESTAMP, report.timestamp)
+                        .commit()
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Failed to save migration report in SharedPreferences", t)
+                }
+            }
+            _migrationReportFlow.value = if (hasDeleted) report else null
+        }
+
+        fun getPendingMigrationReport(context: Context): MigrationReport? {
+            val appCtx = context.applicationContext ?: context
+            appContext = appCtx
+            val prefs = appCtx.getSharedPreferences(MIGRATION_PREFS_NAME, Context.MODE_PRIVATE)
+            val hasPending = prefs.getBoolean(KEY_HAS_PENDING_REPORT, false)
+            if (!hasPending) {
+                _migrationReportFlow.value = null
+                return null
+            }
+            val duplicates = prefs.getInt(KEY_DELETED_DUPLICATES_COUNT, 0)
+            val orphans = prefs.getInt(KEY_DELETED_ORPHANS_COUNT, 0)
+            if (duplicates <= 0 && orphans <= 0) {
+                _migrationReportFlow.value = null
+                return null
+            }
+            val breakdown = prefs.getString(KEY_ORPHAN_BREAKDOWN, "") ?: ""
+            val backupPath = prefs.getString(KEY_DELETED_ROWS_BACKUP_PATH, "")?.takeIf { it.isNotBlank() }
+            val timestamp = prefs.getLong(KEY_REPORT_TIMESTAMP, 0L)
+            val report = MigrationReport(
+                deletedDuplicatesCount = duplicates,
+                deletedOrphansCount = orphans,
+                orphanBreakdown = breakdown,
+                backupFilePath = backupPath,
+                timestamp = timestamp
+            )
+            _migrationReportFlow.value = report
+            return report
+        }
+
+        fun clearMigrationReport(context: Context) {
+            val appCtx = context.applicationContext ?: context
+            val prefs = appCtx.getSharedPreferences(MIGRATION_PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().clear().commit()
+            _migrationReportFlow.value = null
+        }
 
         private fun addColumnIfNotExists(
             db: SupportSQLiteDatabase,
@@ -295,34 +501,46 @@ abstract class AppDatabase : RoomDatabase() {
                 while (dateCursor.moveToNext()) {
                     val dateStr = dateCursor.getString(0)
                     if (!dateStr.isNullOrBlank()) {
-                        dateEpochMap[dateStr] = JalaliCalendar.toEpochDay(dateStr)
+                        val epoch = JalaliCalendar.toEpochDayOrNull(dateStr)
+                            ?: JalaliCalendar.recalculateLegacyEpochDayFallback(dateStr)
+                            ?: 0L
+                        dateEpochMap[dateStr] = epoch
                     }
                 }
                 dateCursor.close()
 
                 // 2. Deduplicate attendance rows before creating unique index on (workerId, date).
                 // Keep the record with the latest timestamp (tie-break with max id).
-                val duplicateCountCursor = db.query("""
-                    SELECT COUNT(*) FROM `attendance`
-                    WHERE `id` IN (
+                val duplicateWhereClause = """
+                    `id` IN (
                         SELECT a1.id
                         FROM `attendance` a1
                         JOIN `attendance` a2 ON a1.workerId = a2.workerId AND a1.date = a2.date
                         WHERE (a1.timestamp < a2.timestamp) OR (a1.timestamp = a2.timestamp AND a1.id < a2.id)
                     )
-                """.trimIndent())
-                val deletedDuplicateCount = if (duplicateCountCursor.moveToFirst()) duplicateCountCursor.getInt(0) else 0
-                duplicateCountCursor.close()
+                """.trimIndent()
 
-                db.execSQL("""
-                    DELETE FROM `attendance`
-                    WHERE `id` IN (
-                        SELECT a1.id
-                        FROM `attendance` a1
-                        JOIN `attendance` a2 ON a1.workerId = a2.workerId AND a1.date = a2.date
-                        WHERE (a1.timestamp < a2.timestamp) OR (a1.timestamp = a2.timestamp AND a1.id < a2.id)
+                val deletedDuplicateRows = queryRowsForBackup(
+                    db = db,
+                    sql = "SELECT * FROM `attendance` WHERE $duplicateWhereClause ORDER BY `id` ASC",
+                    args = emptyArray(),
+                    reason = "DUPLICATE_ATTENDANCE",
+                    table = "attendance"
+                )
+                val deletedDuplicateCount = deletedDuplicateRows.size
+
+                // Persist duplicate rows to db_backups BEFORE deleting them
+                var deletedRowsBackupFile: File? = null
+                if (deletedDuplicateRows.isNotEmpty()) {
+                    deletedRowsBackupFile = writeDeletedRowsBackupFile(
+                        existingFile = null,
+                        duplicateRows = deletedDuplicateRows,
+                        orphanRows = emptyList(),
+                        orphanBreakdown = emptyMap()
                     )
-                """.trimIndent())
+                }
+
+                db.execSQL("DELETE FROM `attendance` WHERE $duplicateWhereClause")
                 Log.w(TAG, "MIGRATION_5_6: Removed $deletedDuplicateCount duplicate attendance row(s).")
 
                 // 3. Recreate workers table (without dateFolderId, workDate, dayOfWeek; with ForeignKey to workplace_folders)
@@ -466,7 +684,9 @@ abstract class AppDatabase : RoomDatabase() {
 
                 for ((fId, dStr) in orphanDates) {
                     val dayOfWeek = JalaliCalendar.getDayOfWeek(dStr)
-                    val epoch = JalaliCalendar.toEpochDay(dStr)
+                    val epoch = JalaliCalendar.toEpochDayOrNull(dStr)
+                        ?: JalaliCalendar.recalculateLegacyEpochDayFallback(dStr)
+                        ?: 0L
                     db.execSQL(
                         "INSERT INTO `date_folders` (`folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`, `epochDay`) VALUES (?, ?, ?, 'روز کاری', '', ?, ?)",
                         arrayOf<Any>(fId, dStr, dayOfWeek, System.currentTimeMillis(), epoch)
@@ -498,7 +718,9 @@ abstract class AppDatabase : RoomDatabase() {
                 for ((fId, dStr) in unresolvedDates) {
                     val effectiveDate = if (dStr.isNotBlank()) dStr else JalaliCalendar.todayString()
                     val dayOfWeek = JalaliCalendar.getDayOfWeek(effectiveDate)
-                    val epoch = JalaliCalendar.toEpochDay(effectiveDate)
+                    val epoch = JalaliCalendar.toEpochDayOrNull(effectiveDate)
+                        ?: JalaliCalendar.recalculateLegacyEpochDayFallback(effectiveDate)
+                        ?: 0L
                     db.execSQL(
                         "INSERT INTO `date_folders` (`folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`, `epochDay`) VALUES (?, ?, ?, 'روز کاری', '', ?, ?)",
                         arrayOf<Any>(fId, effectiveDate, dayOfWeek, System.currentTimeMillis(), epoch)
@@ -601,16 +823,48 @@ abstract class AppDatabase : RoomDatabase() {
 
                 val uniqueOrphanRows = fkViolations.distinctBy { it.first to it.second }
                 val deletedOrphanCount = uniqueOrphanRows.size
+                val orphanBreakdownMap = uniqueOrphanRows.groupBy { it.first }.mapValues { it.value.size }
                 val summary = if (uniqueOrphanRows.isNotEmpty()) {
-                    uniqueOrphanRows.groupBy { it.first }.map { "${it.key}: ${it.value.size}" }.joinToString(", ")
+                    orphanBreakdownMap.entries.joinToString(", ") { "${it.key}: ${it.value}" }
                 } else {
                     "none"
                 }
+
+                // Collect and persist orphan rows to db_backups BEFORE deleting them
+                val deletedOrphanRows = mutableListOf<JSONObject>()
+                for ((table, rowid) in uniqueOrphanRows) {
+                    deletedOrphanRows.addAll(
+                        queryRowsForBackup(
+                            db = db,
+                            sql = "SELECT * FROM `$table` WHERE rowid = ?",
+                            args = arrayOf(rowid),
+                            reason = "ORPHAN_FOREIGN_KEY",
+                            table = table
+                        )
+                    )
+                }
+
+                if (deletedDuplicateRows.isNotEmpty() || deletedOrphanRows.isNotEmpty()) {
+                    deletedRowsBackupFile = writeDeletedRowsBackupFile(
+                        existingFile = deletedRowsBackupFile,
+                        duplicateRows = deletedDuplicateRows,
+                        orphanRows = deletedOrphanRows,
+                        orphanBreakdown = orphanBreakdownMap
+                    )
+                }
+
                 Log.w(TAG, "MIGRATION_5_6: Removed $deletedOrphanCount orphan row(s) violating foreign keys ($summary).")
 
                 for ((table, rowid) in uniqueOrphanRows) {
                     db.execSQL("DELETE FROM `$table` WHERE rowid = ?", arrayOf<Any>(rowid))
                 }
+
+                saveMigrationReport(
+                    deletedDuplicatesCount = deletedDuplicateCount,
+                    deletedOrphansCount = deletedOrphanCount,
+                    orphanBreakdown = if (orphanBreakdownMap.isNotEmpty()) summary else "",
+                    backupFilePath = deletedRowsBackupFile?.absolutePath
+                )
             }
         }
 
@@ -644,6 +898,35 @@ abstract class AppDatabase : RoomDatabase() {
                     WHERE `hasCustomAllowances` = 0
                     """.trimIndent()
                 )
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val tables = listOf("date_folders", "attendance", "expenses")
+                for (table in tables) {
+                    val cursor = db.query("SELECT `id`, `date` FROM `$table`")
+                    val rowUpdates = mutableListOf<Pair<Long, Long>>()
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(0)
+                        val dateStr = cursor.getString(1)
+                        if (!dateStr.isNullOrBlank()) {
+                            val recalculatedEpochDay = JalaliCalendar.toEpochDayOrNull(dateStr)
+                                ?: JalaliCalendar.recalculateLegacyEpochDayFallback(dateStr)
+                            if (recalculatedEpochDay != null) {
+                                rowUpdates.add(id to recalculatedEpochDay)
+                            }
+                        }
+                    }
+                    cursor.close()
+
+                    for ((id, epochDay) in rowUpdates) {
+                        db.execSQL(
+                            "UPDATE `$table` SET `epochDay` = ? WHERE `id` = ?",
+                            arrayOf<Any>(epochDay, id)
+                        )
+                    }
+                }
             }
         }
 
@@ -701,16 +984,26 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         fun getDatabase(context: Context): AppDatabase {
+            val appCtx = context.applicationContext ?: context
+            appContext = appCtx
+            getPendingMigrationReport(appCtx)
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: run {
-                    val appContext = context.applicationContext ?: context
-                    backupDatabaseBeforeMigrationIfNeeded(appContext)
+                    backupDatabaseBeforeMigrationIfNeeded(appCtx)
                     val instance = Room.databaseBuilder(
-                        appContext,
+                        appCtx,
                         AppDatabase::class.java,
                         DB_NAME
                     )
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                        .addMigrations(
+                            MIGRATION_1_2,
+                            MIGRATION_2_3,
+                            MIGRATION_3_4,
+                            MIGRATION_4_5,
+                            MIGRATION_5_6,
+                            MIGRATION_6_7,
+                            MIGRATION_7_8
+                        )
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onOpen(db: SupportSQLiteDatabase) {
                                 super.onOpen(db)

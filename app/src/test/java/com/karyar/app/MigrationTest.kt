@@ -407,6 +407,28 @@ class MigrationTest {
         assertEquals(2L, attList[1].first)
         assertEquals("FULL_DAY", attList[1].third)
 
+        // 5. Verify migration_report in SharedPreferences and deleted row backup file in db_backups
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val report = AppDatabase.getPendingMigrationReport(context)
+        org.junit.Assert.assertNotNull("Migration report must be present when duplicates were deleted", report)
+        assertEquals(1, report!!.deletedDuplicatesCount)
+        assertEquals(0, report.deletedOrphansCount)
+        assertEquals("در به‌روزرسانی داده‌ها ۱ رکورد حضور تکراری و ۰ رکورد ناسازگار حذف شد", report.formatDialogMessage())
+        org.junit.Assert.assertFalse("Backup file path must not be blank", report.backupFilePath.isNullOrBlank())
+        val backupFile = java.io.File(report.backupFilePath!!)
+        org.junit.Assert.assertTrue("Deleted rows backup file must exist in db_backups", backupFile.exists())
+        val backupJson = org.json.JSONObject(backupFile.readText(Charsets.UTF_8))
+        val deletedRows = backupJson.getJSONArray("deletedRows")
+        assertEquals(1, deletedRows.length())
+        val deletedRow = deletedRows.getJSONObject(0)
+        assertEquals(999L, deletedRow.getLong("id"))
+        assertEquals(101L, deletedRow.getLong("workerId"))
+        assertEquals("1403/01/01", deletedRow.getString("date"))
+        assertEquals(1000000L, deletedRow.getLong("dailyWage"))
+        assertEquals("DUPLICATE_ATTENDANCE", deletedRow.getString("reason"))
+
+        AppDatabase.clearMigrationReport(context)
+        backupFile.delete()
         db.close()
     }
 
@@ -616,6 +638,23 @@ class MigrationTest {
         eCountCursor.close()
         assertEquals("Expenses count after migration must equal before migration", 3, expCountPost)
 
+        // Verify migration report and backup for the 1 deleted duplicate (id = 6)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val report = AppDatabase.getPendingMigrationReport(context)
+        org.junit.Assert.assertNotNull(report)
+        assertEquals(1, report!!.deletedDuplicatesCount)
+        assertEquals(0, report.deletedOrphansCount)
+        val backupFile = java.io.File(report.backupFilePath!!)
+        org.junit.Assert.assertTrue(backupFile.exists())
+        val json = org.json.JSONObject(backupFile.readText(Charsets.UTF_8))
+        val deletedRows = json.getJSONArray("deletedRows")
+        assertEquals(1, deletedRows.length())
+        assertEquals(6L, deletedRows.getJSONObject(0).getLong("id"))
+        assertEquals(1L, deletedRows.getJSONObject(0).getLong("workerId"))
+        assertEquals("1403/01/01", deletedRows.getJSONObject(0).getString("date"))
+
+        AppDatabase.clearMigrationReport(context)
+        backupFile.delete()
         db.close()
     }
 
@@ -910,6 +949,8 @@ class MigrationTest {
 
     @Test
     fun migrate5To6_logsExpectedDuplicateAndOrphanDeletedCounts() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AppDatabase.clearMigrationReport(context)
         org.robolectric.shadows.ShadowLog.clear()
         var db = helper.createDatabase(TEST_DB + "-log-counts", 5)
 
@@ -925,13 +966,13 @@ class MigrationTest {
         insertWorkerV5(db, 1L, 1L, "کارگر معتبر")
 
         // 1 valid attendance + 2 duplicates for worker 1 on 1403/01/01 (total 2 duplicates deleted)
-        insertAttendanceV5(db, 1L, 1L, 1L, "1403/01/01", timestamp = 1000L)
-        insertAttendanceV5(db, 2L, 1L, 1L, "1403/01/01", timestamp = 2000L)
-        insertAttendanceV5(db, 3L, 1L, 1L, "1403/01/01", timestamp = 3000L)
+        insertAttendanceV5(db, 1L, 1L, 1L, "1403/01/01", timestamp = 1000L, dailyWage = 1_100_000L, hourlyWage = 150_000L, overtimeRate = 200_000L)
+        insertAttendanceV5(db, 2L, 1L, 1L, "1403/01/01", timestamp = 2000L, dailyWage = 1_200_000L, hourlyWage = 160_000L, overtimeRate = 210_000L)
+        insertAttendanceV5(db, 3L, 1L, 1L, "1403/01/01", timestamp = 3000L, dailyWage = 1_300_000L, hourlyWage = 170_000L, overtimeRate = 220_000L)
 
         // 2 orphan attendance rows: workerId 999 does not exist, folderId 888 does not exist
-        insertAttendanceV5(db, 4L, 1L, 999L, "1403/01/01", timestamp = 1000L)
-        insertAttendanceV5(db, 5L, 888L, 1L, "1403/01/02", timestamp = 1000L)
+        insertAttendanceV5(db, 4L, 1L, 999L, "1403/01/01", timestamp = 1000L, dailyWage = 900_000L)
+        insertAttendanceV5(db, 5L, 888L, 1L, "1403/01/02", timestamp = 1000L, dailyWage = 950_000L)
 
         db.close()
 
@@ -955,6 +996,76 @@ class MigrationTest {
             "Expected orphan deletion count (2) to be logged in AppDatabase logs, actual: $logs",
             logs.any { it.contains("MIGRATION_5_6: Removed 2 orphan row(s) violating foreign keys (attendance: 2).") }
         )
+
+        // Verify SharedPreferences("migration_report") has counts, breakdown, and Persian dialog message
+        val prefs = context.getSharedPreferences(AppDatabase.MIGRATION_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        org.junit.Assert.assertTrue(prefs.getBoolean(AppDatabase.KEY_HAS_PENDING_REPORT, false))
+        assertEquals(2, prefs.getInt(AppDatabase.KEY_DELETED_DUPLICATES_COUNT, -1))
+        assertEquals(2, prefs.getInt(AppDatabase.KEY_DELETED_ORPHANS_COUNT, -1))
+        assertEquals("attendance: 2", prefs.getString(AppDatabase.KEY_ORPHAN_BREAKDOWN, ""))
+        assertEquals(
+            "در به‌روزرسانی داده‌ها ۲ رکورد حضور تکراری و ۲ رکورد ناسازگار حذف شد",
+            prefs.getString(AppDatabase.KEY_REPORT_MESSAGE, "")
+        )
+
+        val pendingReport = AppDatabase.getPendingMigrationReport(context)
+        org.junit.Assert.assertNotNull(pendingReport)
+        assertEquals(2, pendingReport!!.deletedDuplicatesCount)
+        assertEquals(2, pendingReport.deletedOrphansCount)
+        assertEquals(
+            "در به‌روزرسانی داده‌ها ۲ رکورد حضور تکراری و ۲ رکورد ناسازگار حذف شد",
+            pendingReport.formatDialogMessage()
+        )
+
+        // Verify pre-deletion backup file in db_backups contains id, workerId, date, and wage amounts
+        val backupPath = pendingReport.backupFilePath
+        org.junit.Assert.assertFalse("Backup path should be recorded in migration report", backupPath.isNullOrBlank())
+        val backupFile = java.io.File(backupPath!!)
+        org.junit.Assert.assertTrue("Backup file must exist inside db_backups", backupFile.exists())
+        assertEquals("db_backups", backupFile.parentFile?.name)
+
+        val jsonRoot = org.json.JSONObject(backupFile.readText(Charsets.UTF_8))
+        assertEquals(2, jsonRoot.getInt("deletedDuplicatesCount"))
+        assertEquals(2, jsonRoot.getInt("deletedOrphansCount"))
+        val rowsArray = jsonRoot.getJSONArray("deletedRows")
+        assertEquals(4, rowsArray.length())
+
+        val rowById = (0 until rowsArray.length())
+            .map { rowsArray.getJSONObject(it) }
+            .associateBy { it.getLong("id") }
+
+        assertEquals(setOf(1L, 2L, 4L, 5L), rowById.keys)
+        // Check duplicate row 1
+        assertEquals("DUPLICATE_ATTENDANCE", rowById[1L]!!.getString("reason"))
+        assertEquals(1L, rowById[1L]!!.getLong("workerId"))
+        assertEquals("1403/01/01", rowById[1L]!!.getString("date"))
+        assertEquals(1_100_000L, rowById[1L]!!.getLong("dailyWage"))
+        assertEquals(150_000L, rowById[1L]!!.getLong("hourlyWage"))
+        assertEquals(200_000L, rowById[1L]!!.getLong("overtimeRate"))
+
+        // Check duplicate row 2
+        assertEquals("DUPLICATE_ATTENDANCE", rowById[2L]!!.getString("reason"))
+        assertEquals(1L, rowById[2L]!!.getLong("workerId"))
+        assertEquals("1403/01/01", rowById[2L]!!.getString("date"))
+        assertEquals(1_200_000L, rowById[2L]!!.getLong("dailyWage"))
+
+        // Check orphan rows 4 and 5
+        assertEquals("ORPHAN_FOREIGN_KEY", rowById[4L]!!.getString("reason"))
+        assertEquals(999L, rowById[4L]!!.getLong("workerId"))
+        assertEquals("1403/01/01", rowById[4L]!!.getString("date"))
+        assertEquals(900_000L, rowById[4L]!!.getLong("dailyWage"))
+
+        assertEquals("ORPHAN_FOREIGN_KEY", rowById[5L]!!.getString("reason"))
+        assertEquals(1L, rowById[5L]!!.getLong("workerId"))
+        assertEquals("1403/01/02", rowById[5L]!!.getString("date"))
+        assertEquals(950_000L, rowById[5L]!!.getLong("dailyWage"))
+
+        // Confirming dialog clears migration_report from SharedPreferences
+        AppDatabase.clearMigrationReport(context)
+        org.junit.Assert.assertNull(AppDatabase.getPendingMigrationReport(context))
+        org.junit.Assert.assertFalse(prefs.getBoolean(AppDatabase.KEY_HAS_PENDING_REPORT, false))
+
+        backupFile.delete()
     }
 
     private fun resetDatabaseInstance() {
@@ -1029,5 +1140,102 @@ class MigrationTest {
             java.io.File(dbFile.path + "-wal").delete()
             java.io.File(dbFile.path + "-shm").delete()
         }
+    }
+
+    @Test
+    fun migrate7To8_recalculatesEpochDayForDateFoldersAttendanceAndExpenses() {
+        var db = helper.createDatabase(TEST_DB + "-v7-to-v8", 7)
+
+        db.execSQL("""
+            INSERT INTO `workplace_folders` (`id`, `name`, `foremanName`, `employerName`, `colorTag`, `createdAt`, `notes`)
+            VALUES (1, 'پروژه تست مایگریشن ۸', 'سرکارگر', 'کارفرما', 16086790, '1403/12/30', '')
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `workers` (
+                `id`, `folderId`, `name`, `role`, `phone`, `nationalId`, `baseDailyWage`, `baseHourlyWage`,
+                `isHourlyEnabled`, `hourlyWageRate`, `hourlyHours`, `isOvertimeEnabled`, `overtimeRate`, `overtimeHours`,
+                `isActive`, `notes`, `colorTag`, `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`,
+                `accommodationAllowance`, `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `createdAt`
+            ) VALUES (
+                10, 1, 'کارگر اول', 'بنا', '', '', 1000000, 0,
+                0, 0, 0.0, 0, 0, 0.0,
+                1, '', 16086790, 0, 'ALLOWANCE', 0, 'ALLOWANCE',
+                0, 'ALLOWANCE', 0, 'ALLOWANCE', 1000
+            )
+        """.trimIndent())
+
+        // Insert rows with intentionally wrong legacy epochDay values (e.g. 0 or off-by-one from old 33-year rule)
+        db.execSQL("""
+            INSERT INTO `date_folders` (`id`, `folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`, `epochDay`)
+            VALUES
+                (101, 1, '1403/12/30', 'پنج‌شنبه', 'آخر سال ۱۴۰۳', '', 1000, 12345),
+                (102, 1, '1404/01/01', 'جمعه', 'نوروز ۱۴۰۴', '', 2000, 12346),
+                (103, 1, '1405/01/01', 'شنبه', 'نوروز ۱۴۰۵', '', 3000, 99999)
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `attendance` (
+                `id`, `folderId`, `workerId`, `dateFolderId`, `date`, `epochDay`, `status`, `timestamp`,
+                `entryTime`, `exitTime`, `regularHours`, `overtimeHours`, `overtimeRate`, `hourlyWageRate`,
+                `hourlyHours`, `dailyWage`, `hourlyWage`, `workplaceName`, `employerName`, `foremanName`, `notes`,
+                `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`, `accommodationAllowance`,
+                `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `hasCustomAllowances`
+            ) VALUES
+                (201, 1, 10, 101, '1403/12/30', 0, 'FULL_DAY', 1000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 1000000, 0, '', '', '', '', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1),
+                (202, 1, 10, 102, '1404/01/01', 111, 'FULL_DAY', 2000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 1000000, 0, '', '', '', '', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1),
+                (203, 1, 10, 103, '1405/01/01', 222, 'FULL_DAY', 3000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 1000000, 0, '', '', '', '', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1)
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `expenses` (
+                `id`, `folderId`, `title`, `category`, `scope`, `impactType`, `workerId`, `workerName`,
+                `amount`, `accommodationDays`, `date`, `epochDay`, `timestamp`, `workplaceName`, `employerName`, `foremanName`, `notes`
+            ) VALUES
+                (301, 1, 'هزینه ناهار', 'FOOD', 'GROUP', 'DEDUCTION', NULL, NULL, 250000, 0, '1403/12/30', -1, 1000, '', '', '', ''),
+                (302, 1, 'هزینه ایاب و ذهاب', 'TRANSIT', 'INDIVIDUAL', 'ALLOWANCE', 10, 'کارگر اول', 50000, 0, '1405/01/01', 0, 2000, '', '', '', '')
+        """.trimIndent())
+
+        db.close()
+
+        db = helper.runMigrationsAndValidate(TEST_DB + "-v7-to-v8", 8, true, AppDatabase.MIGRATION_7_8)
+
+        val expected14031230 = com.karyar.app.util.JalaliCalendar.toEpochDay("1403/12/30")
+        val expected14040101 = com.karyar.app.util.JalaliCalendar.toEpochDay("1404/01/01")
+        val expected14050101 = com.karyar.app.util.JalaliCalendar.toEpochDay("1405/01/01")
+
+        // Verify date_folders epochDays
+        db.query("SELECT `id`, `epochDay` FROM `date_folders` ORDER BY `id` ASC").use { c ->
+            val actual = mutableMapOf<Long, Long>()
+            while (c.moveToNext()) {
+                actual[c.getLong(0)] = c.getLong(1)
+            }
+            assertEquals(expected14031230, actual[101L])
+            assertEquals(expected14040101, actual[102L])
+            assertEquals(expected14050101, actual[103L])
+        }
+
+        // Verify attendance epochDays
+        db.query("SELECT `id`, `epochDay` FROM `attendance` ORDER BY `id` ASC").use { c ->
+            val actual = mutableMapOf<Long, Long>()
+            while (c.moveToNext()) {
+                actual[c.getLong(0)] = c.getLong(1)
+            }
+            assertEquals(expected14031230, actual[201L])
+            assertEquals(expected14040101, actual[202L])
+            assertEquals(expected14050101, actual[203L])
+        }
+
+        // Verify expenses epochDays
+        db.query("SELECT `id`, `epochDay` FROM `expenses` ORDER BY `id` ASC").use { c ->
+            val actual = mutableMapOf<Long, Long>()
+            while (c.moveToNext()) {
+                actual[c.getLong(0)] = c.getLong(1)
+            }
+            assertEquals(expected14031230, actual[301L])
+            assertEquals(expected14050101, actual[302L])
+        }
+
+        db.close()
     }
 }

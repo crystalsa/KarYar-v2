@@ -149,7 +149,7 @@ fun WorkerItemCard(
                             val hHours = if (attendance != null && attendance.hourlyHours > 0) attendance.hourlyHours
                             else (if (worker.hourlyHours > 0) worker.hourlyHours else 0.0)
                             if (hHours > 0) {
-                                Pair("${Formatters.toPersianDigits(hHours.toString().removeSuffix(".0"))} ساعت کار", CyanAccent)
+                                Pair("${Formatters.formatHours(hHours)} کار", CyanAccent)
                             } else {
                                 Pair("ساعتی", CyanAccent)
                             }
@@ -358,7 +358,7 @@ fun WorkerItemCard(
                     } else if (isHourly) {
                         Text(
                             text = if (dayCalc.hourlyHours > 0) {
-                                "دستمزد ساعتی: ${Formatters.toPersianDigits(dayCalc.hourlyHours.toString().removeSuffix(".0"))} ساعت (هر ساعت ${Formatters.formatCurrency(hRate)}) = ${Formatters.formatCurrency(dayCalc.hourlyPay)}"
+                                "دستمزد ساعتی: ${Formatters.formatHours(dayCalc.hourlyHours)} (هر ساعت ${Formatters.formatCurrency(hRate)}) = ${Formatters.formatCurrency(dayCalc.hourlyPay)}"
                             } else {
                                 "دستمزد ساعتی: (هر ساعت ${Formatters.formatCurrency(hRate)}) = ۰ تومان"
                             },
@@ -391,7 +391,7 @@ fun WorkerItemCard(
 
                     if (!isAbsent && dayCalc.overtimeHours > 0) {
                         Text(
-                            text = "اضافه کار: ${Formatters.toPersianDigits(dayCalc.overtimeHours.toString().removeSuffix(".0"))} ساعت (هر ساعت ${Formatters.formatCurrency(otRate)}) = ${Formatters.formatCurrency(dayCalc.overtimePay)}",
+                            text = "اضافه کار: ${Formatters.formatHours(dayCalc.overtimeHours)} (هر ساعت ${Formatters.formatCurrency(otRate)}) = ${Formatters.formatCurrency(dayCalc.overtimePay)}",
                             fontSize = 10.5.sp,
                             color = AmberAccent
                         )

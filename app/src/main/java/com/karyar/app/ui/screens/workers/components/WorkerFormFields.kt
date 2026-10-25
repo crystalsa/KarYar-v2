@@ -81,8 +81,14 @@ fun OptionalWorkerFieldRow(
     accentColor: Color,
     placeholder: String,
     testTag: String,
+    errorMessage: String? = null,
+    isWarningDismissed: Boolean = false,
+    onDismissWarningChange: ((Boolean) -> Unit)? = null,
+    dismissWarningLabel: String = "کارگر اتباع خارجی است (ثبت با همین کد)",
     modifier: Modifier = Modifier
 ) {
+    val showBlockingError = enabled && errorMessage != null && !isWarningDismissed
+
     HairlineCard(
         modifier = modifier.fillMaxWidth(),
         backgroundColor = Slate100,
@@ -124,6 +130,20 @@ fun OptionalWorkerFieldRow(
                     leadingIcon = {
                         Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(14.dp))
                     },
+                    isError = showBlockingError,
+                    supportingText = if (errorMessage != null) {
+                        {
+                            Text(
+                                text = if (isWarningDismissed) {
+                                    "هشدار نادیده گرفته شد: $errorMessage"
+                                } else {
+                                    errorMessage
+                                },
+                                color = if (isWarningDismissed) AmberAccent else MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag(testTag),
@@ -135,7 +155,33 @@ fun OptionalWorkerFieldRow(
                         unfocusedContainerColor = Color.White
                     )
                 )
+
+                if (errorMessage != null && onDismissWarningChange != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = isWarningDismissed,
+                            onCheckedChange = onDismissWarningChange,
+                            colors = CheckboxDefaults.colors(checkedColor = AmberAccent),
+                            modifier = Modifier
+                                .size(22.dp)
+                                .testTag("${testTag}_bypass_warning")
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = dismissWarningLabel,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
 }
+

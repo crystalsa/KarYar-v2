@@ -30,6 +30,9 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance WHERE folderId = :folderId AND date = :date ORDER BY id DESC")
     fun getAttendanceForDateInFolder(folderId: Long, date: String): Flow<List<AttendanceEntity>>
 
+    @Query("SELECT * FROM attendance WHERE folderId = :folderId AND date = :date ORDER BY id ASC")
+    suspend fun getAttendanceForDateInFolderSync(folderId: Long, date: String): List<AttendanceEntity>
+
     @Query("SELECT * FROM attendance WHERE workerId = :workerId AND date = :date LIMIT 1")
     suspend fun getAttendanceForWorkerAndDate(workerId: Long, date: String): AttendanceEntity?
 
@@ -41,6 +44,28 @@ interface AttendanceDao {
 
     @Query("SELECT * FROM attendance WHERE dateFolderId = :dateFolderId OR (folderId = :folderId AND date = :date)")
     suspend fun getAttendanceForDateFolderSync(folderId: Long, dateFolderId: Long, date: String): List<AttendanceEntity>
+
+    @Query(
+        """
+        SELECT * FROM attendance
+        WHERE date = :newDate
+          AND workerId IN (
+              SELECT workerId FROM attendance
+              WHERE dateFolderId = :dateFolderId OR (folderId = :folderId AND date = :oldDate)
+          )
+          AND id NOT IN (
+              SELECT id FROM attendance
+              WHERE dateFolderId = :dateFolderId OR (folderId = :folderId AND date = :oldDate)
+          )
+        ORDER BY id ASC
+        """
+    )
+    suspend fun getConflictingAttendancesForDateMove(
+        folderId: Long,
+        dateFolderId: Long,
+        oldDate: String,
+        newDate: String
+    ): List<AttendanceEntity>
 
     @Query("SELECT * FROM attendance WHERE folderId = :folderId AND epochDay BETWEEN :startEpoch AND :endEpoch ORDER BY epochDay ASC")
     fun getAttendanceBetweenEpochDays(folderId: Long, startEpoch: Long, endEpoch: Long): Flow<List<AttendanceEntity>>
@@ -108,7 +133,7 @@ interface AttendanceDao {
 
     @Query(
         """
-        UPDATE OR IGNORE attendance
+        UPDATE attendance
         SET date = :newDate, epochDay = :newEpochDay, dateFolderId = :dateFolderId
         WHERE dateFolderId = :dateFolderId OR (folderId = :folderId AND date = :oldDate)
         """

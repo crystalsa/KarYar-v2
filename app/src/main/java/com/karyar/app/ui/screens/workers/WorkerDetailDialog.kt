@@ -279,7 +279,7 @@ fun WorkerDetailDialog(
                             CompactDetailRow(
                                 label = "دستمزد ساعتی:",
                                 value = if (dayCalc.hourlyHours > 0) {
-                                    "${Formatters.toPersianDigits(dayCalc.hourlyHours.toString().removeSuffix(".0"))} ساعت (هر ساعت ${Formatters.formatCurrency(hRate)}) = ${Formatters.formatCurrency(dayCalc.hourlyPay)}"
+                                    "${Formatters.formatHours(dayCalc.hourlyHours)} (هر ساعت ${Formatters.formatCurrency(hRate)}) = ${Formatters.formatCurrency(dayCalc.hourlyPay)}"
                                 } else {
                                     "(هر ساعت ${Formatters.formatCurrency(hRate)}) = ۰ تومان"
                                 },
@@ -299,7 +299,7 @@ fun WorkerDetailDialog(
                             val otRate = if (attendance != null && attendance.overtimeRate > 0) attendance.overtimeRate else worker.overtimeRate
                             CompactDetailRow(
                                 "اضافه کاری:",
-                                "${Formatters.toPersianDigits(dayCalc.overtimeHours.toString().removeSuffix(".0"))} ساعت (هر ساعت ${Formatters.formatCurrency(otRate)}) = ${Formatters.formatCurrency(dayCalc.overtimePay)}",
+                                "${Formatters.formatHours(dayCalc.overtimeHours)} (هر ساعت ${Formatters.formatCurrency(otRate)}) = ${Formatters.formatCurrency(dayCalc.overtimePay)}",
                                 valueColor = AmberAccent
                             )
                         }

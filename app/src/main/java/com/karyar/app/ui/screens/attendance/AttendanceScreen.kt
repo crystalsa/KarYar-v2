@@ -62,6 +62,7 @@ import com.karyar.app.ui.components.StatusBadge
 import com.karyar.app.ui.screens.attendance.components.AttendanceEmptyDayState
 import com.karyar.app.ui.screens.attendance.components.AttendanceTableHeader
 import com.karyar.app.ui.screens.attendance.components.AttendanceWorkerRow
+import com.karyar.app.ui.screens.attendance.components.ConfirmDeleteAttendanceDialog
 import com.karyar.app.ui.screens.attendance.components.CopyWorkerConfirmDialog
 import com.karyar.app.ui.screens.attendance.components.DeleteWorkerConfirmDialog
 import com.karyar.app.ui.screens.attendance.components.EditDayAttendanceDialog
@@ -88,6 +89,8 @@ fun AttendanceScreen(
     val allWorkers by viewModel.workers.collectAsState()
     val attendanceList by viewModel.attendanceList.collectAsState()
     val expenses by viewModel.expenses.collectAsState()
+    val pendingDeleteAttendance by viewModel.pendingDeleteAttendance.collectAsState()
+    val pendingDateConflict by viewModel.pendingDateConflict.collectAsState()
 
     var isAddingWorker by remember { mutableStateOf(false) }
     var showMustCreateDayDialog by remember { mutableStateOf(false) }
@@ -500,6 +503,18 @@ fun AttendanceScreen(
     if (editingDateFolder != null) {
         EditDateFolderDialog(
             dateFolder = editingDateFolder!!,
+            existingAttendances = attendanceList,
+            workers = allWorkers,
+            onMergeConflict = { date, dayOfWeek, title ->
+                viewModel.mergeDateFolder(
+                    editingDateFolder!!.copy(
+                        date = date,
+                        dayOfWeek = dayOfWeek,
+                        title = title
+                    )
+                )
+                editingDateFolder = null
+            },
             onDismiss = { editingDateFolder = null },
             onConfirm = { date, dayOfWeek, title ->
                 viewModel.updateDateFolder(
@@ -511,6 +526,17 @@ fun AttendanceScreen(
                 )
                 editingDateFolder = null
             }
+        )
+    }
+
+    if (pendingDateConflict != null) {
+        val conflict = pendingDateConflict!!
+        DateConflictDialog(
+            message = conflict.message,
+            targetDate = conflict.targetDate,
+            conflictingWorkerNames = conflict.conflictingWorkers.map { it.name },
+            onDismiss = { viewModel.dismissDateConflict() },
+            onMerge = { viewModel.confirmMergeDateFolder() }
         )
     }
 
@@ -697,6 +723,16 @@ fun AttendanceScreen(
                 )
                 copyingWorkerFromAttendance = null
             }
+        )
+    }
+
+    if (pendingDeleteAttendance != null) {
+        val pending = pendingDeleteAttendance!!
+        ConfirmDeleteAttendanceDialog(
+            workerName = pending.worker.name,
+            dateStr = pending.dateStr,
+            onDismiss = { viewModel.dismissDeleteAttendance() },
+            onConfirm = { viewModel.confirmDeleteAttendance() }
         )
     }
 }

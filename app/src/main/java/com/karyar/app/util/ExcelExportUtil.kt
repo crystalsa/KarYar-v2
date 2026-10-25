@@ -44,6 +44,18 @@ object ExcelExportUtil {
     }
 
     /**
+     * Formats a single CSV row by passing every cell through [escapeCsv] so no cell
+     * (whether static title/header or dynamic value) can bypass escaping.
+     */
+    fun formatRow(vararg cells: Any?): String {
+        return cells.joinToString(",") { escapeCsv(it) } + "\n"
+    }
+
+    private fun Appendable.writeRow(vararg cells: Any?) {
+        append(formatRow(*cells))
+    }
+
+    /**
      * Exports full project records to a properly formatted, injection-safe CSV file with UTF-8 BOM.
      * Compatible with Microsoft Excel, LibreOffice Calc, and Google Sheets.
      */
@@ -68,46 +80,94 @@ object ExcelExportUtil {
 
             OutputStreamWriter(fos, StandardCharsets.UTF_8).use { writer ->
                 // Header & Title
-                writer.append("سامانه مدیریت جامع کارگران\n")
-                writer.append("پروژه,${escapeCsv(projectName)}\n")
-                writer.append("تاریخ صدور خروجی,${escapeCsv(JalaliCalendar.todayString())}\n\n")
+                writer.writeRow("سامانه مدیریت جامع کارگران")
+                writer.writeRow("پروژه", projectName)
+                writer.writeRow("تاریخ صدور خروجی", JalaliCalendar.todayString())
+                writer.append("\n")
 
                 // -------------------------------------------------------------
                 // Section 1: Performance Summary (تسویه حساب و کارکرد پرسنل)
                 // -------------------------------------------------------------
-                writer.append("=== خلاصه کارکرد و تسویه حساب هر کارگر ===\n")
-                writer.append("ردیف,شناسه کارگر,نام کارگر,شغل / تخصص,تفکیک وضعیت کارکرد,تعداد شیفت (روز),ساعات عادی (ساعت),ساعت کار ساعتی (ساعت),اضافه کاری (ساعت),دستمزد پایه (تومان),دستمزد ساعتی (تومان),اضافه کاری (تومان),کمک‌هزینه‌ها (تومان),سایر مزایا (تومان),کسورات (تومان),سایر کسورات (تومان),سهم هزینه‌های گروهی (تومان),خالص دریافتی نهایی (تومان),وضعیت بدهی (تومان)\n")
+                writer.writeRow("■ خلاصه کارکرد و تسویه حساب هر کارگر")
+                writer.writeRow(
+                    "ردیف",
+                    "شناسه کارگر",
+                    "نام کارگر",
+                    "شغل / تخصص",
+                    "تفکیک وضعیت کارکرد",
+                    "تعداد شیفت (روز)",
+                    "ساعات عادی (ساعت)",
+                    "ساعت کار ساعتی (ساعت)",
+                    "اضافه کاری (ساعت)",
+                    "دستمزد پایه (تومان)",
+                    "دستمزد ساعتی (تومان)",
+                    "اضافه کاری (تومان)",
+                    "کمک‌هزینه‌ها (تومان)",
+                    "سایر مزایا (تومان)",
+                    "کسورات (تومان)",
+                    "سایر کسورات (تومان)",
+                    "سهم هزینه‌های گروهی (تومان)",
+                    "خالص دریافتی نهایی (تومان)",
+                    "وضعیت بدهی (تومان)"
+                )
 
                 for ((index, p) in performances.withIndex()) {
-                    writer.append("${index + 1},")
-                    writer.append("${p.worker.id},")
-                    writer.append("${escapeCsv(p.worker.name)},")
-                    writer.append("${escapeCsv(p.worker.role)},")
-                    writer.append("${escapeCsv(p.formatWorkSummary())},")
-                    writer.append("${p.totalShifts},")
-                    writer.append("${p.regularHours},")
-                    writer.append("${p.hourlyHours},")
-                    writer.append("${p.overtimeHours},")
-                    writer.append("${p.baseWageTotal},")
-                    writer.append("${p.hourlyPayTotal},")
-                    writer.append("${p.overtimePayTotal},")
-                    writer.append("${p.totalAllowances},")
-                    writer.append("${p.otherAllowanceTotal},")
-                    writer.append("${p.totalDeductions},")
-                    writer.append("${p.otherDeductionTotal},")
-                    writer.append("${p.groupExpenseShare},")
-                    val netCol = if (p.debtAmount > 0L) escapeCsv("بدهکار: ${Formatters.formatCurrency(p.debtAmount)}") else "${p.netPayout}"
-                    val debtCol = if (p.debtAmount > 0L) escapeCsv("بدهکار: ${Formatters.formatCurrency(p.debtAmount)}") else "۰ تومان"
-                    writer.append("$netCol,")
-                    writer.append("$debtCol\n")
+                    val netCol: Any = if (p.debtAmount > 0L) {
+                        "بدهکار: ${Formatters.formatCurrency(p.debtAmount)}"
+                    } else {
+                        p.netPayout
+                    }
+                    val debtCol = if (p.debtAmount > 0L) {
+                        "بدهکار: ${Formatters.formatCurrency(p.debtAmount)}"
+                    } else {
+                        "۰ تومان"
+                    }
+                    writer.writeRow(
+                        index + 1,
+                        p.worker.id,
+                        p.worker.name,
+                        p.worker.role,
+                        p.formatWorkSummary(),
+                        p.totalShifts,
+                        Formatters.formatHours(p.regularHours),
+                        Formatters.formatHours(p.hourlyHours),
+                        Formatters.formatHours(p.overtimeHours),
+                        p.baseWageTotal,
+                        p.hourlyPayTotal,
+                        p.overtimePayTotal,
+                        p.totalAllowances,
+                        p.otherAllowanceTotal,
+                        p.totalDeductions,
+                        p.otherDeductionTotal,
+                        p.groupExpenseShare,
+                        netCol,
+                        debtCol
+                    )
                 }
                 writer.append("\n")
 
                 // -------------------------------------------------------------
                 // Section 2: Attendance Logs (ثبت تردد روزانه)
                 // -------------------------------------------------------------
-                writer.append("=== گزارش ثبت ورود و خروج و وضعیت روزهای کاری ===\n")
-                writer.append("ردیف,تاریخ,شناسه کارگر,نام کارگر,وضعیت حضور,ساعت ورود,ساعت خروج,ساعات عادی,ساعت کار ساعتی,ساعات اضافه کار,دستمزد روزانه (تومان),دستمزد ساعتی (تومان),محل کار,کارفرما,سرکارگر,توضیحات\n")
+                writer.writeRow("■ گزارش ثبت ورود و خروج و وضعیت روزهای کاری")
+                writer.writeRow(
+                    "ردیف",
+                    "تاریخ",
+                    "شناسه کارگر",
+                    "نام کارگر",
+                    "وضعیت حضور",
+                    "ساعت ورود",
+                    "ساعت خروج",
+                    "ساعات عادی",
+                    "ساعت کار ساعتی",
+                    "ساعات اضافه کار",
+                    "دستمزد روزانه (تومان)",
+                    "دستمزد ساعتی (تومان)",
+                    "محل کار",
+                    "کارفرما",
+                    "سرکارگر",
+                    "توضیحات"
+                )
 
                 // Rule: Worker identity is strictly worker.id
                 val workerMap = workers.associateBy { it.id }
@@ -122,22 +182,24 @@ object ExcelExportUtil {
                         AttendanceStatus.ABSENT -> "غایب"
                     }
 
-                    writer.append("${index + 1},")
-                    writer.append("${escapeCsv(att.date)},")
-                    writer.append("${att.workerId},")
-                    writer.append("${escapeCsv(wName)},")
-                    writer.append("${escapeCsv(statusStr)},")
-                    writer.append("${escapeCsv(att.entryTime)},")
-                    writer.append("${escapeCsv(att.exitTime)},")
-                    writer.append("${att.regularHours},")
-                    writer.append("${att.hourlyHours},")
-                    writer.append("${att.overtimeHours},")
-                    writer.append("${att.dailyWage},")
-                    writer.append("${att.hourlyWage},")
-                    writer.append("${escapeCsv(att.workplaceName)},")
-                    writer.append("${escapeCsv(att.employerName)},")
-                    writer.append("${escapeCsv(att.foremanName)},")
-                    writer.append("${escapeCsv(att.notes)}\n")
+                    writer.writeRow(
+                        index + 1,
+                        att.date,
+                        att.workerId,
+                        wName,
+                        statusStr,
+                        att.entryTime,
+                        att.exitTime,
+                        Formatters.formatHours(att.regularHours),
+                        Formatters.formatHours(att.hourlyHours),
+                        Formatters.formatHours(att.overtimeHours),
+                        att.dailyWage,
+                        att.hourlyWage,
+                        att.workplaceName,
+                        att.employerName,
+                        att.foremanName,
+                        att.notes
+                    )
                 }
                 writer.append("\n")
 
@@ -145,19 +207,30 @@ object ExcelExportUtil {
                 // Section 3: Expenses (هزینه‌های ثبت‌شده پروژه)
                 // -------------------------------------------------------------
                 if (expenses.isNotEmpty()) {
-                    writer.append("=== صورت هزینه‌های کارگاه و پروژه ===\n")
-                    writer.append("ردیف,تاریخ,عنوان هزینه,دسته‌بندی,نوع تسهیم,کارگر منتسب,مبلغ (تومان),توضیحات\n")
+                    writer.writeRow("■ صورت هزینه‌های کارگاه و پروژه")
+                    writer.writeRow(
+                        "ردیف",
+                        "تاریخ",
+                        "عنوان هزینه",
+                        "دسته‌بندی",
+                        "نوع تسهیم",
+                        "کارگر منتسب",
+                        "مبلغ (تومان)",
+                        "توضیحات"
+                    )
                     for ((index, exp) in expenses.withIndex()) {
                         val scopeStr = if (exp.scope == "GROUP") "سهم گروهی (تقسیم بین کل کارگران)" else "اختصاصی فرد"
-                        val assignedWorker = exp.workerName ?: "-"
-                        writer.append("${index + 1},")
-                        writer.append("${escapeCsv(exp.date)},")
-                        writer.append("${escapeCsv(exp.title)},")
-                        writer.append("${escapeCsv(exp.category)},")
-                        writer.append("${escapeCsv(scopeStr)},")
-                        writer.append("${escapeCsv(assignedWorker)},")
-                        writer.append("${exp.amount},")
-                        writer.append("${escapeCsv(exp.notes)}\n")
+                        val assignedWorker = exp.workerName ?: "—"
+                        writer.writeRow(
+                            index + 1,
+                            exp.date,
+                            exp.title,
+                            exp.category,
+                            scopeStr,
+                            assignedWorker,
+                            exp.amount,
+                            exp.notes
+                        )
                     }
                     writer.append("\n")
                 }
@@ -166,19 +239,19 @@ object ExcelExportUtil {
                 // Section 4: Analytics Totals (تطابق کامل با داشبورد مالی)
                 // -------------------------------------------------------------
                 if (analytics != null) {
-                    writer.append("=== خلاصه آمار و تعهدات کل کارگاه ===\n")
-                    writer.append("شاخص,مقدار\n")
-                    writer.append("تعداد کل کارگران,${analytics.totalWorkersCount}\n")
-                    writer.append("تعداد پرسنل فعال,${analytics.activeWorkersCount}\n")
-                    writer.append("تعداد روزهای کاری کارگاه (تقویمی),${analytics.totalWorkDaysCount}\n")
-                    writer.append("مجموع کارکرد پرسنل (نفر-روز / شیفت),${analytics.totalPersonDays}\n")
-                    writer.append("مجموع ساعات کارکرد عادی,${analytics.totalWorkHours}\n")
-                    writer.append("مجموع ساعات اضافه کاری,${analytics.totalOvertimeHours}\n")
-                    writer.append("مجموع دستمزد پایه پرداخت‌شده (تومان),${analytics.totalWagesPaid}\n")
-                    writer.append("مجموع اضافه کاری و ساعتی (تومان),${analytics.totalOvertimePaid + analytics.totalHourlyPaid}\n")
-                    writer.append("کل هزینه‌های جانبی کارگاه (تومان),${analytics.grandTotalExpenses}\n")
-                    writer.append("مجموع کل مخارج و هزینه‌های پروژه (تومان),${analytics.grandTotalProjectCost}\n")
-                    writer.append("مجموع بدهی کارگران (تومان),${analytics.totalWorkerDebt}\n")
+                    writer.writeRow("■ خلاصه آمار و تعهدات کل کارگاه")
+                    writer.writeRow("شاخص", "مقدار")
+                    writer.writeRow("تعداد کل کارگران", analytics.totalWorkersCount)
+                    writer.writeRow("تعداد پرسنل فعال", analytics.activeWorkersCount)
+                    writer.writeRow("تعداد روزهای کاری کارگاه (تقویمی)", analytics.totalWorkDaysCount)
+                    writer.writeRow("مجموع کارکرد پرسنل (نفر-روز / شیفت)", analytics.totalPersonDays)
+                    writer.writeRow("مجموع ساعات کارکرد عادی", Formatters.formatHours(analytics.totalWorkHours))
+                    writer.writeRow("مجموع ساعات اضافه کاری", Formatters.formatHours(analytics.totalOvertimeHours))
+                    writer.writeRow("مجموع دستمزد پایه پرداخت‌شده (تومان)", analytics.totalWagesPaid)
+                    writer.writeRow("مجموع اضافه کاری و ساعتی (تومان)", analytics.totalOvertimePaid + analytics.totalHourlyPaid)
+                    writer.writeRow("کل هزینه‌های جانبی کارگاه (تومان)", analytics.grandTotalExpenses)
+                    writer.writeRow("مجموع کل مخارج و هزینه‌های پروژه (تومان)", analytics.grandTotalProjectCost)
+                    writer.writeRow("مجموع بدهی کارگران (تومان)", analytics.totalWorkerDebt)
                 }
 
                 writer.flush()

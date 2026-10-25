@@ -25,25 +25,31 @@ on:
         default: ''
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: build-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: 'temurin'
           java-version: '21'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
 
       - name: Make Gradlew Executable
         run: |
@@ -64,15 +70,17 @@ jobs:
     name: Build Android APK
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -81,7 +89,7 @@ jobs:
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
 
       - name: Make Gradlew Executable
         run: |
@@ -130,22 +138,34 @@ jobs:
 
       - name: Determine Version Info (Auto-Increment)
         id: version_info
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CREATE_RELEASE: ${{ inputs.create_release }}
         run: |
           git fetch --tags --force 2>/dev/null || true
 
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             # Manually pushed release tag
             TAG="${GITHUB_REF#refs/tags/}"
+            if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid pushed tag format '$TAG'. Expected v<number>.<number>.<number> (e.g. v1.2.3)."
+              exit 1
+            fi
             VERSION_NAME="${TAG#v}"
             IS_RELEASE="true"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
-            # Manual workflow dispatch with specific tag
-            TAG="${{ inputs.release_tag }}"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && -n "$RELEASE_TAG" ]]; then
+            # Manual workflow dispatch with specific tag — validate strict vX.Y.Z format
+            if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid release_tag input '$RELEASE_TAG'. Only pattern v<number>.<number>.<number> is allowed."
+              exit 1
+            fi
+            TAG="$RELEASE_TAG"
             VERSION_NAME="${TAG#v}"
             IS_RELEASE="true"
           else
-            # Push to main/master: Auto-increment patch version based on latest existing tag
-            LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
+            # Push to main/master: Auto-increment patch version based on latest existing valid tag
+            LATEST_TAG=$(git tag -l "v*" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
             if [ -z "$LATEST_TAG" ]; then
               VERSION_NAME="1.0.1"
             else
@@ -160,6 +180,10 @@ jobs:
               VERSION_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
             fi
             TAG="v${VERSION_NAME}"
+            if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Computed tag '$TAG' does not match v<number>.<number>.<number>."
+              exit 1
+            fi
             IS_RELEASE="true"
             echo "Auto-incremented release version: $TAG (previous: ${LATEST_TAG:-none})"
           fi
@@ -177,15 +201,18 @@ jobs:
           echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
 
       - name: Build APK (Release or Debug)
+        env:
+          HAS_RELEASE_KEYSTORE: ${{ steps.prep_signing.outputs.has_release_keystore }}
+          RELEASE_TAG: ${{ steps.version_info.outputs.tag }}
         run: |
           mkdir -p artifacts
-          if [ "${{ steps.prep_signing.outputs.has_release_keystore }}" == "true" ]; then
+          if [ "$HAS_RELEASE_KEYSTORE" == "true" ]; then
             echo "Building signed Release APK with versionCode=$VERSION_CODE, versionName=$VERSION_NAME..."
-            ./gradlew assembleRelease -PVERSION_CODE=$VERSION_CODE -PVERSION_NAME=$VERSION_NAME --no-configuration-cache --stacktrace
+            ./gradlew assembleRelease -PVERSION_CODE="$VERSION_CODE" -PVERSION_NAME="$VERSION_NAME" --no-configuration-cache --stacktrace
             APK_FILE=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)
           else
             echo "Building Debug APK with versionCode=$VERSION_CODE, versionName=$VERSION_NAME..."
-            ./gradlew assembleDebug -PVERSION_CODE=$VERSION_CODE -PVERSION_NAME=$VERSION_NAME --no-configuration-cache --stacktrace
+            ./gradlew assembleDebug -PVERSION_CODE="$VERSION_CODE" -PVERSION_NAME="$VERSION_NAME" --no-configuration-cache --stacktrace
             APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" 2>/dev/null | head -n 1)
           fi
 
@@ -194,7 +221,7 @@ jobs:
           fi
 
           if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
-            cp "$APK_FILE" "artifacts/KarYar-${{ steps.version_info.outputs.tag }}.apk"
+            cp "$APK_FILE" "artifacts/KarYar-${RELEASE_TAG}.apk"
             cp "$APK_FILE" artifacts/KarYar-Latest.apk
             cp "$APK_FILE" artifacts/WorkerManager-App.apk
             echo "Generated APK artifacts:"
@@ -205,6 +232,10 @@ jobs:
           fi
 
       - name: Verify APK Version Info
+        env:
+          IS_RELEASE: ${{ steps.version_info.outputs.is_release }}
+          RELEASE_TAG: ${{ steps.version_info.outputs.tag }}
+          EXPECTED_TAG_VNAME: ${{ steps.version_info.outputs.version_name }}
         run: |
           echo "Verifying version metadata in generated APK..."
           APK_FILE=$(find artifacts -name "*.apk" 2>/dev/null | head -n 1)
@@ -235,8 +266,7 @@ jobs:
           echo "APK internal versionCode: $APK_VCODE (Expected: $VERSION_CODE)"
           echo "APK internal versionName: $APK_VNAME (Expected: $VERSION_NAME)"
 
-          if [ "${{ steps.version_info.outputs.is_release }}" == "true" ] && [ -n "${{ steps.version_info.outputs.tag }}" ]; then
-            EXPECTED_TAG_VNAME="${{ steps.version_info.outputs.version_name }}"
+          if [ "$IS_RELEASE" == "true" ] && [ -n "$RELEASE_TAG" ]; then
             if [ "$APK_VNAME" != "$EXPECTED_TAG_VNAME" ]; then
               echo "::error::Version mismatch! APK contains versionName='$APK_VNAME' but release tag expects '$EXPECTED_TAG_VNAME'!"
               exit 1
@@ -245,15 +275,16 @@ jobs:
           fi
 
       - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: KarYar-APK
           path: artifacts/KarYar-Latest.apk
           retention-days: 30
 
       - name: Create GitHub Release
+        id: create_release
         if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && (github.event_name != 'workflow_dispatch' || inputs.create_release == true)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}
           target_commitish: ${{ github.sha }}
@@ -275,12 +306,57 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prune Old Releases (Keep only latest 5, preserving git tags)
-        if: steps.version_info.outputs.is_release == 'true'
+      - name: Dry-Run & Report Old Releases to Prune
+        id: prune_dry_run
+        if: steps.version_info.outputs.is_release == 'true' && steps.create_release.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Checking existing releases to keep only the 5 most recent versions..."
-          # gh release list returns releases ordered newest first.
-          # We use jq to extract all releases from index 5 onward (i.e. older than top 5).
+          echo "Running dry-run inspection of GitHub Releases before pruning..."
+          KEPT_RELEASES=$(gh release list --limit 100 --json tagName --jq '.[:5][].tagName' 2>/dev/null || true)
+          OLD_RELEASES=$(gh release list --limit 100 --json tagName --jq '.[5:][].tagName' 2>/dev/null || true)
+
+          echo "=== Release Retention Report (Dry-Run) ==="
+          echo "Kept latest releases (up to 5):"
+          echo "${KEPT_RELEASES:-none}"
+
+          if [ -n "$OLD_RELEASES" ]; then
+            PRUNE_COUNT=$(echo "$OLD_RELEASES" | wc -l | tr -d ' ')
+            echo "Candidate old releases to prune ($PRUNE_COUNT):"
+            echo "$OLD_RELEASES"
+            echo "has_candidates=true" >> "$GITHUB_OUTPUT"
+          else
+            PRUNE_COUNT=0
+            echo "No old releases eligible for pruning (total releases <= 5)."
+            echo "has_candidates=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "### 🧹 گزارش بررسی و پاک‌سازی ریلیزهای قدیمی (Dry-Run Report)"
+              echo "- **ریلیزهای حفظ‌شده (۵ نسخه آخر):**"
+              if [ -n "$KEPT_RELEASES" ]; then
+                for tag in $KEPT_RELEASES; do
+                  echo "  - \`$tag\`"
+                done
+              else
+                echo "  - _(موردی یافت نشد)_"
+              fi
+              echo "- **تعداد ریلیزهای کاندیدای حذف:** \`$PRUNE_COUNT\`"
+              if [ -n "$OLD_RELEASES" ]; then
+                for old_tag in $OLD_RELEASES; do
+                  echo "  - \`$old_tag\` (تگ گیت حفظ می‌شود)"
+                done
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Prune Old Releases (Keep only latest 5, preserving git tags)
+        if: steps.version_info.outputs.is_release == 'true' && steps.create_release.outcome == 'success' && steps.prune_dry_run.outputs.has_candidates == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Pruning old releases (keeping only the 5 most recent versions)..."
           OLD_RELEASES=$(gh release list --limit 100 --json tagName --jq '.[5:][].tagName' 2>/dev/null || true)
           if [ -n "$OLD_RELEASES" ]; then
             echo "Found older releases to prune (keeping latest 5):"
@@ -293,5 +369,3 @@ jobs:
           else
             echo "Total releases count is 5 or fewer. No pruning needed."
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

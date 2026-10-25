@@ -123,6 +123,7 @@ fun ExpenseSettingRow(
         }
 
         if (enabled) {
+            val amountError = Formatters.validateWageInput(amount, fieldLabel = "کمک‌هزینه $title")
             Spacer(modifier = Modifier.height(4.dp))
             OutlinedTextField(
                 value = amount,
@@ -130,9 +131,20 @@ fun ExpenseSettingRow(
                 label = { Text("مبلغ روزانه (تومان)", fontSize = 11.sp) },
                 placeholder = { Text("۵۰,۰۰۰", fontSize = 11.sp) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = amountError != null,
+                supportingText = if (amountError != null) {
+                    {
+                        Text(
+                            text = amountError,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 10.5.sp
+                        )
+                    }
+                } else null,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
         }
     }
 }
+

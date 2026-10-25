@@ -73,6 +73,7 @@ fun AddAttendanceDialog(
 ) {
     var selectedWorker by remember { mutableStateOf(workers.firstOrNull()) }
     var date by remember { mutableStateOf(JalaliCalendar.todayString()) }
+    var dateError by remember { mutableStateOf<String?>(null) }
     var entryTime by remember { mutableStateOf("08:00") }
     var exitTime by remember { mutableStateOf("17:00") }
 
@@ -109,6 +110,39 @@ fun AddAttendanceDialog(
     var employerName by remember { mutableStateOf(folder?.employerName ?: "") }
     var foremanName by remember { mutableStateOf(folder?.foremanName ?: "") }
     var notes by remember { mutableStateOf("") }
+
+    val regularHoursError = Formatters.validateHoursInput(
+        regularHours,
+        fieldLabel = if (isHourly) "ساعت کار ساعتی" else "ساعات کار عادی",
+        maxHours = Formatters.MAX_REGULAR_HOURS
+    )
+    val overtimeHoursError = if (hasOvertime) {
+        Formatters.validateHoursInput(
+            overtimeHours,
+            fieldLabel = "ساعات اضافه‌کاری",
+            maxHours = Formatters.MAX_OVERTIME_HOURS
+        )
+    } else null
+    val dailyWageError = if (isDailyWageEnabled) {
+        Formatters.validateWageInput(dailyWage, fieldLabel = "دستمزد روزانه")
+    } else null
+    val hourlyWageError = if (isHourly) {
+        Formatters.validateWageInput(hourlyWage, fieldLabel = "نرخ دستمزد ساعتی")
+    } else null
+    val workplaceNameError = Formatters.validateOptionalName(workplaceName, fieldLabel = "نام محل کار")
+    val employerNameError = Formatters.validateOptionalName(employerName, fieldLabel = "نام کارفرما")
+    val foremanNameError = Formatters.validateOptionalName(foremanName, fieldLabel = "نام سرکارگر")
+    val liveDateError = dateError ?: JalaliCalendar.validateDateError(date)
+
+    val isFormValid = selectedWorker != null &&
+        liveDateError == null &&
+        regularHoursError == null &&
+        overtimeHoursError == null &&
+        dailyWageError == null &&
+        hourlyWageError == null &&
+        workplaceNameError == null &&
+        employerNameError == null &&
+        foremanNameError == null
 
     // Auto update wage when selected worker changes
     fun onWorkerChanged(worker: WorkerEntity) {
@@ -201,9 +235,22 @@ fun AddAttendanceDialog(
                 // Date & Time inputs
                 OutlinedTextField(
                     value = date,
-                    onValueChange = { date = it },
+                    onValueChange = {
+                        date = it
+                        dateError = JalaliCalendar.validateDateError(it)
+                    },
                     label = { Text("تاریخ (شمسی)") },
                     leadingIcon = { Icon(Icons.Default.CalendarToday, contentDescription = null, tint = AmberAccent) },
+                    isError = liveDateError != null,
+                    supportingText = if (liveDateError != null) {
+                        {
+                            Text(
+                                text = liveDateError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 11.sp
+                            )
+                        }
+                    } else null,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -242,7 +289,19 @@ fun AddAttendanceDialog(
                     label = { Text("ساعات کار عادی") },
                     placeholder = { Text("۸") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
+                    isError = regularHoursError != null,
+                    supportingText = if (regularHoursError != null) {
+                        {
+                            Text(
+                                text = regularHoursError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("attendance_regular_hours_input"),
                     singleLine = true
                 )
 
@@ -279,7 +338,19 @@ fun AddAttendanceDialog(
                         label = { Text("ساعات اضافه کاری") },
                         placeholder = { Text("مثلاً ۲") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.fillMaxWidth(),
+                        isError = overtimeHoursError != null,
+                        supportingText = if (overtimeHoursError != null) {
+                            {
+                                Text(
+                                    text = overtimeHoursError,
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 10.5.sp
+                                )
+                            }
+                        } else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("attendance_overtime_hours_input"),
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = AmberAccent,
@@ -295,7 +366,8 @@ fun AddAttendanceDialog(
                     isDailyWageEnabled = isDailyWageEnabled,
                     onDailyWageEnabledChange = { isDailyWageEnabled = it },
                     baseDailyWage = dailyWage,
-                    onBaseDailyWageChange = { dailyWage = it }
+                    onBaseDailyWageChange = { dailyWage = it },
+                    dailyWageError = dailyWageError
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -303,8 +375,16 @@ fun AddAttendanceDialog(
                 // --- SECTION: Hourly Wage (فعال‌سازی با یک تیک‌باکس) ---
                 val parsedAttHourlyRate = Formatters.parsePrice(hourlyWage)
                 val parsedAttHourlyHours = Formatters.parseDouble(regularHours)
-                val attHourlyTotal = if (isHourly && parsedAttHourlyRate > 0 && parsedAttHourlyHours > 0) {
-                    (parsedAttHourlyRate * parsedAttHourlyHours).toLong()
+                val attHourlyTotal = if (
+                    isHourly &&
+                    hourlyWageError == null &&
+                    regularHoursError == null &&
+                    parsedAttHourlyRate > 0 &&
+                    parsedAttHourlyHours > 0
+                ) {
+                    runCatching {
+                        Math.round(parsedAttHourlyRate * parsedAttHourlyHours)
+                    }.getOrDefault(0L)
                 } else 0L
 
                 HairlineCard(
@@ -335,7 +415,7 @@ fun AddAttendanceDialog(
                                     color = if (isHourly) CyanAccent else MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            if (isHourly && (hourlyWage.isNotBlank() || regularHours.isNotBlank())) {
+                            if (isHourly && hourlyWageError == null && regularHoursError == null && (hourlyWage.isNotBlank() || regularHours.isNotBlank())) {
                                 Text(
                                     text = "جمع: ${Formatters.formatCurrency(attHourlyTotal)}",
                                     fontSize = 11.sp,
@@ -360,7 +440,19 @@ fun AddAttendanceDialog(
                                         label = { Text("مبلغ هر ساعت (تومان)", fontSize = 11.sp) },
                                         placeholder = { Text("۱۵۰,۰۰۰ یا ۰", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1.2f),
+                                        isError = hourlyWageError != null,
+                                        supportingText = if (hourlyWageError != null) {
+                                            {
+                                                Text(
+                                                    text = hourlyWageError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
+                                        modifier = Modifier
+                                            .weight(1.2f)
+                                            .testTag("attendance_hourly_rate_input"),
                                         singleLine = true
                                     )
                                     // کادر دوم: تعداد ساعت کار
@@ -372,7 +464,19 @@ fun AddAttendanceDialog(
                                         label = { Text("تعداد ساعت کار", fontSize = 11.sp) },
                                         placeholder = { Text("۸ یا ۰", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        modifier = Modifier.weight(0.8f),
+                                        isError = regularHoursError != null,
+                                        supportingText = if (regularHoursError != null) {
+                                            {
+                                                Text(
+                                                    text = regularHoursError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
+                                        modifier = Modifier
+                                            .weight(0.8f)
+                                            .testTag("attendance_hourly_hours_input"),
                                         singleLine = true
                                     )
                                 }
@@ -389,6 +493,16 @@ fun AddAttendanceDialog(
                     onValueChange = { workplaceName = it },
                     label = { Text("نام محل کار / پروژه") },
                     leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, tint = CyanAccent) },
+                    isError = workplaceNameError != null,
+                    supportingText = if (workplaceNameError != null) {
+                        {
+                            Text(
+                                text = workplaceNameError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -405,6 +519,16 @@ fun AddAttendanceDialog(
                         onValueChange = { employerName = it },
                         label = { Text("نام کارفرما") },
                         leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = AmberAccent) },
+                        isError = employerNameError != null,
+                        supportingText = if (employerNameError != null) {
+                            {
+                                Text(
+                                    text = employerNameError,
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        } else null,
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
@@ -413,6 +537,16 @@ fun AddAttendanceDialog(
                         onValueChange = { foremanName = it },
                         label = { Text("نام سرکارگر") },
                         leadingIcon = { Icon(Icons.Default.Engineering, contentDescription = null, tint = EmeraldAccent) },
+                        isError = foremanNameError != null,
+                        supportingText = if (foremanNameError != null) {
+                            {
+                                Text(
+                                    text = foremanNameError,
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        } else null,
                         modifier = Modifier.weight(1f),
                         singleLine = true
                     )
@@ -435,7 +569,12 @@ fun AddAttendanceDialog(
                 Button(
                     onClick = {
                         val worker = selectedWorker
-                        if (worker != null) {
+                        val err = JalaliCalendar.validateDateError(date)
+                        if (err != null) {
+                            dateError = err
+                        } else if (worker != null && isFormValid) {
+                            val (jy, jm, jd) = JalaliCalendar.parseDate(date)
+                            val normalizedDate = JalaliCalendar.formatDate(jy, jm, jd)
                             val parsedRegHours = Formatters.parseDouble(regularHours)
                             val finalRegHours = if (regularHours.isNotBlank()) parsedRegHours else if (isHourly) 0.0 else 8.0
                             val parsedHourlyRateVal = if (isHourly) Formatters.parsePrice(hourlyWage) else 0L
@@ -443,8 +582,8 @@ fun AddAttendanceDialog(
                             val entity = AttendanceEntity(
                                 folderId = folder?.id ?: 1L,
                                 workerId = worker.id,
-                                date = date.trim(),
-                                epochDay = JalaliCalendar.toEpochDay(date.trim()),
+                                date = normalizedDate,
+                                epochDay = JalaliCalendar.toEpochDay(normalizedDate),
                                 status = if (isHourly && !isDailyWageEnabled) AttendanceStatus.HOURLY else if (finalRegHours == 4.0) AttendanceStatus.HALF_DAY else AttendanceStatus.FULL_DAY,
                                 entryTime = entryTime.trim(),
                                 exitTime = exitTime.trim(),
@@ -478,7 +617,7 @@ fun AddAttendanceDialog(
                         .testTag("submit_attendance_button"),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AmberAccent),
-                    enabled = selectedWorker != null
+                    enabled = isFormValid
                 ) {
                     Text(
                         text = "ثبت نهایی ورود و خروج",
@@ -491,3 +630,4 @@ fun AddAttendanceDialog(
         }
     }
 }
+

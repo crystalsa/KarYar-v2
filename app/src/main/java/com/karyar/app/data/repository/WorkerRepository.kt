@@ -14,9 +14,26 @@ import com.karyar.app.data.local.entity.ExpenseEntity
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
 import com.karyar.app.domain.model.DeletionImpact
+import com.karyar.app.util.Formatters
 import com.karyar.app.util.JalaliCalendar
 import com.karyar.app.util.WageCalculator
 import kotlinx.coroutines.flow.Flow
+
+class DateConflictException(
+    val targetDate: String,
+    val conflictingWorkers: List<WorkerEntity>,
+    message: String = buildMessage(conflictingWorkers.size)
+) : IllegalStateException(message) {
+    val workers: List<WorkerEntity> get() = conflictingWorkers
+    val workerIds: List<Long> get() = conflictingWorkers.map { it.id }
+    val workerNames: List<String> get() = conflictingWorkers.map { it.name }
+    val workerCount: Int get() = conflictingWorkers.size
+
+    companion object {
+        fun buildMessage(count: Int): String =
+            "در تاریخ مقصد برای ${Formatters.toPersianDigits(count)} کارگر حضور ثبت شده است"
+    }
+}
 
 class WorkerRepository(
     private val database: AppDatabase,
@@ -38,11 +55,13 @@ class WorkerRepository(
 
     fun getDateFoldersByFolder(folderId: Long): Flow<List<DateFolderEntity>> = dateFolderDao.getDateFoldersByFolder(folderId)
     fun getWorkersByFolder(folderId: Long): Flow<List<WorkerEntity>> = workerDao.getWorkersByFolder(folderId)
+    suspend fun getWorkersByFolderSync(folderId: Long): List<WorkerEntity> = workerDao.getWorkersByFolderSync(folderId)
     fun getWorkersByDateFolder(dateFolderId: Long): Flow<List<WorkerEntity>> = workerDao.getWorkersByDateFolder(dateFolderId)
     fun getAttendanceByFolder(folderId: Long): Flow<List<AttendanceEntity>> = attendanceDao.getAttendanceByFolder(folderId)
     fun getAttendanceForDateInFolder(folderId: Long, date: String): Flow<List<AttendanceEntity>> = attendanceDao.getAttendanceForDateInFolder(folderId, date)
     suspend fun getAttendanceForWorkerAndDate(workerId: Long, date: String): AttendanceEntity? = attendanceDao.getAttendanceForWorkerAndDate(workerId, date)
     fun getExpensesByFolder(folderId: Long): Flow<List<ExpenseEntity>> = expenseDao.getExpensesByFolder(folderId)
+    suspend fun getExpensesByFolderSync(folderId: Long): List<ExpenseEntity> = expenseDao.getExpensesByFolderSync(folderId)
     fun getExpensesForDateInFolder(folderId: Long, date: String): Flow<List<ExpenseEntity>> = expenseDao.getExpensesForDateInFolder(folderId, date)
 
     suspend fun insertFolder(folder: WorkplaceFolderEntity): Long = folderDao.insertFolder(folder)
@@ -52,12 +71,49 @@ class WorkerRepository(
     suspend fun insertDateFolder(dateFolder: DateFolderEntity): Long = dateFolderDao.insertDateFolder(
         dateFolder.copy(epochDay = JalaliCalendar.toEpochDay(dateFolder.date))
     )
+
     suspend fun updateDateFolder(dateFolder: DateFolderEntity) = database.withTransaction {
         val oldDateFolder = dateFolderDao.getDateFolderById(dateFolder.id)
         val newEpochDay = JalaliCalendar.toEpochDay(dateFolder.date)
         val updatedFolder = dateFolder.copy(epochDay = newEpochDay)
-        dateFolderDao.updateDateFolder(updatedFolder)
         if (oldDateFolder != null && oldDateFolder.date != dateFolder.date) {
+            val directConflicts = attendanceDao.getConflictingAttendancesForDateMove(
+                folderId = dateFolder.folderId,
+                dateFolderId = dateFolder.id,
+                oldDate = oldDateFolder.date,
+                newDate = dateFolder.date
+            )
+            val sourceAttendances = attendanceDao.getAttendanceForDateFolderSync(
+                folderId = dateFolder.folderId,
+                dateFolderId = dateFolder.id,
+                date = oldDateFolder.date
+            )
+            val sourceIds = sourceAttendances.asSequence().map { it.id }.toHashSet()
+            val folderTargetAttendances = attendanceDao
+                .getAttendanceForDateInFolderSync(dateFolder.folderId, dateFolder.date)
+                .filter { it.id !in sourceIds }
+
+            val conflictingAttendances = if (directConflicts.isNotEmpty()) {
+                directConflicts
+            } else {
+                folderTargetAttendances
+            }
+
+            if (conflictingAttendances.isNotEmpty()) {
+                val workerById = workerDao.getWorkersByFolderSync(dateFolder.folderId).associateBy { it.id }
+                val conflictingWorkerIds = conflictingAttendances.map { it.workerId }.distinct()
+                val conflictingWorkers = conflictingWorkerIds.map { wId ->
+                    workerById[wId]
+                        ?: workerDao.getWorkerByIdSync(wId)
+                        ?: WorkerEntity(id = wId, folderId = dateFolder.folderId, name = "کارگر", role = "")
+                }
+                throw DateConflictException(
+                    targetDate = dateFolder.date,
+                    conflictingWorkers = conflictingWorkers
+                )
+            }
+
+            dateFolderDao.updateDateFolder(updatedFolder)
             attendanceDao.updateDateForDateFolder(
                 folderId = dateFolder.folderId,
                 dateFolderId = dateFolder.id,
@@ -65,7 +121,61 @@ class WorkerRepository(
                 newDate = dateFolder.date,
                 newEpochDay = newEpochDay
             )
+        } else {
+            dateFolderDao.updateDateFolder(updatedFolder)
         }
+    }
+
+    suspend fun mergeDateFolder(dateFolder: DateFolderEntity): DateFolderEntity = database.withTransaction {
+        val oldDateFolder = dateFolderDao.getDateFolderById(dateFolder.id)
+        val newEpochDay = JalaliCalendar.toEpochDay(dateFolder.date)
+        val existingTargetFolder = dateFolderDao.getDateFolderByDate(dateFolder.folderId, dateFolder.date)
+        val survivingFolder = if (existingTargetFolder != null && existingTargetFolder.id != dateFolder.id) {
+            existingTargetFolder.copy(
+                dayOfWeek = dateFolder.dayOfWeek.ifBlank { existingTargetFolder.dayOfWeek },
+                title = dateFolder.title.ifBlank { existingTargetFolder.title },
+                notes = dateFolder.notes.ifBlank { existingTargetFolder.notes },
+                epochDay = newEpochDay
+            )
+        } else {
+            dateFolder.copy(epochDay = newEpochDay)
+        }
+
+        if (oldDateFolder != null && oldDateFolder.date != dateFolder.date) {
+            val sourceAttendances = attendanceDao.getAttendanceForDateFolderSync(
+                folderId = dateFolder.folderId,
+                dateFolderId = dateFolder.id,
+                date = oldDateFolder.date
+            )
+            for (srcAtt in sourceAttendances) {
+                val targetAtt = attendanceDao.getAttendanceForWorkerAndDate(srcAtt.workerId, dateFolder.date)
+                if (targetAtt != null && targetAtt.id != srcAtt.id) {
+                    attendanceDao.deleteAttendance(srcAtt)
+                    attendanceDao.updateAttendance(
+                        targetAtt.copy(
+                            dateFolderId = survivingFolder.id,
+                            epochDay = newEpochDay
+                        )
+                    )
+                }
+            }
+            attendanceDao.updateDateForDateFolder(
+                folderId = dateFolder.folderId,
+                dateFolderId = dateFolder.id,
+                oldDate = oldDateFolder.date,
+                newDate = dateFolder.date,
+                newEpochDay = newEpochDay
+            )
+            if (survivingFolder.id != dateFolder.id) {
+                val movedAttendances = attendanceDao.getAttendanceByDateFolderSync(dateFolder.id)
+                for (att in movedAttendances) {
+                    attendanceDao.updateAttendance(att.copy(dateFolderId = survivingFolder.id))
+                }
+                dateFolderDao.deleteDateFolderById(dateFolder.id)
+            }
+        }
+        dateFolderDao.updateDateFolder(survivingFolder)
+        survivingFolder
     }
     suspend fun getDateFolderByDate(folderId: Long, date: String): DateFolderEntity? = dateFolderDao.getDateFolderByDate(folderId, date)
     suspend fun deleteDateFolder(dateFolder: DateFolderEntity) = database.withTransaction {

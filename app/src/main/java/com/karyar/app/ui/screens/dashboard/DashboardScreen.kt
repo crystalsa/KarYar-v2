@@ -74,6 +74,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.ui.WorkerViewModel
+import com.karyar.app.ui.components.AddExpenseDialog
+import com.karyar.app.ui.components.ExpensesManagementSection
 import com.karyar.app.ui.components.GlowStatCard
 import com.karyar.app.ui.components.HairlineCard
 import com.karyar.app.ui.components.IconicsBox
@@ -105,6 +107,9 @@ fun DashboardScreen(
     val workerPerformances by viewModel.workerPerformances.collectAsState()
     val dateFolders by viewModel.dateFolders.collectAsState()
     val attendanceList by viewModel.attendanceList.collectAsState()
+    val expenses by viewModel.expenses.collectAsState()
+    val selectedDailyDate by viewModel.selectedDailyDate.collectAsState()
+    var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
 
     // 1. When app starts fresh without any folder selected:
     // "صفحه اول کار وقتی شروع میشه باید خالی باشه"
@@ -430,19 +435,17 @@ fun DashboardScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        val hoursStr = if (totalProjectHours % 1.0 == 0.0) totalProjectHours.toLong().toString() else String.format(Locale.US, "%.1f", totalProjectHours)
                         GlowStatCard(
                             title = "کل ساعات کارکرد",
-                            value = "${Formatters.toPersianDigits(hoursStr)} ساعت",
+                            value = Formatters.formatHours(totalProjectHours),
                             subtitle = "مجموع ساعات عادی و اضافه کار",
                             icon = Icons.Default.AccessTime,
                             accentColor = AmberAccent,
                             modifier = Modifier.weight(1f)
                         )
-                        val otHoursStr = if (totalProjectOvertimeHours % 1.0 == 0.0) totalProjectOvertimeHours.toLong().toString() else String.format(Locale.US, "%.1f", totalProjectOvertimeHours)
                         GlowStatCard(
                             title = "کل اضافه کاری",
-                            value = "${Formatters.toPersianDigits(otHoursStr)} ساعت",
+                            value = Formatters.formatHours(totalProjectOvertimeHours),
                             subtitle = "ارزش: ${Formatters.formatCurrency(totalProjectOvertimePay)}",
                             icon = Icons.Default.TrendingUp,
                             accentColor = IndigoAccent,
@@ -451,6 +454,16 @@ fun DashboardScreen(
                     }
                 }
             }
+        }
+
+        // بخش هزینه‌های فردی و گروهی کارگاه (ثبت و حذف هزینه)
+        item {
+            ExpensesManagementSection(
+                expenses = expenses,
+                workers = workers,
+                onAddExpenseClick = { showAddExpenseDialog = true },
+                onDeleteExpense = { viewModel.deleteExpense(it) }
+            )
         }
 
         // بخش ۲: خلاصه کارکرد و دستمزد هر پرسنل در کل پروژه با فلش رو به پایین (پیش‌فرض مخفی)
@@ -511,6 +524,18 @@ fun DashboardScreen(
                 WorkerCumulativePerformanceCard(perf = perf)
             }
         }
+    }
+
+    if (showAddExpenseDialog) {
+        AddExpenseDialog(
+            workers = workers,
+            initialDate = selectedDailyDate.ifBlank { JalaliCalendar.todayString() },
+            onDismiss = { showAddExpenseDialog = false },
+            onConfirm = { newExpense ->
+                viewModel.addExpense(newExpense)
+                showAddExpenseDialog = false
+            }
+        )
     }
 }
 
@@ -710,12 +735,12 @@ private fun WorkerCumulativePerformanceCard(
                                         else 0L
 
                             if (perf.hourlyPayTotal > 0L || hHours > 0.0 || worker.isHourlyEnabled) {
-                                val hHoursClean = Formatters.toPersianDigits(hHours.toString().removeSuffix(".0"))
+                                val hHoursClean = Formatters.formatHours(hHours)
                                 val hRateStr = Formatters.formatCurrency(hRate)
                                 val hTotalStr = Formatters.formatCurrency(perf.hourlyPayTotal)
                                 Text(
                                     text = if (hHours > 0.0) {
-                                        "دستمزد ساعتی: $hHoursClean ساعت (هر ساعت $hRateStr) = $hTotalStr"
+                                        "دستمزد ساعتی: $hHoursClean (هر ساعت $hRateStr) = $hTotalStr"
                                     } else {
                                         "دستمزد ساعتی: (هر ساعت $hRateStr) = ۰ تومان"
                                     },
@@ -733,11 +758,11 @@ private fun WorkerCumulativePerformanceCard(
                                          else 0L
 
                             if (perf.overtimePayTotal > 0L || otHours > 0.0) {
-                                val otHoursClean = Formatters.toPersianDigits(otHours.toString().removeSuffix(".0"))
+                                val otHoursClean = Formatters.formatHours(otHours)
                                 val otRateStr = Formatters.formatCurrency(otRate)
                                 val otTotalStr = Formatters.formatCurrency(perf.overtimePayTotal)
                                 Text(
-                                    text = "اضافه کار: $otHoursClean ساعت (هر ساعت $otRateStr) = $otTotalStr",
+                                    text = "اضافه کار: $otHoursClean (هر ساعت $otRateStr) = $otTotalStr",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = AmberAccent

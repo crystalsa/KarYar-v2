@@ -266,3 +266,66 @@ fun CopyWorkerConfirmDialog(
         }
     )
 }
+
+@Composable
+fun ConfirmDeleteAttendanceDialog(
+    workerName: String,
+    dateStr: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "حذف رکورد حضور دارای اطلاعات دستی",
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "رکورد حضور «$workerName» در تاریخ ${com.karyar.app.util.Formatters.toPersianDigits(dateStr)} دارای مقادیر ثبت‌شده دستی (مانند اضافه‌کاری، ساعت کارکرد، توضیحات یا مزایای سفارشی) است.",
+                    fontSize = 12.5.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 19.sp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "آیا از حذف این رکورد حضور اطمینان دارید؟",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = RoseAccent,
+                    lineHeight = 18.sp
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag("confirm_delete_attendance_button")
+            ) {
+                Text(
+                    text = "حذف رکورد",
+                    color = RoseAccent,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("dismiss_delete_attendance_button")
+            ) {
+                Text(
+                    text = "انصراف",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    )
+}

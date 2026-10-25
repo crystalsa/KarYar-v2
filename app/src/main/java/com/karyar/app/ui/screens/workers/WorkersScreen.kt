@@ -58,6 +58,7 @@ import com.karyar.app.ui.components.IconicsSize
 import com.karyar.app.ui.components.LoadingButton
 import com.karyar.app.ui.components.ModernPillSelector
 import com.karyar.app.ui.screens.attendance.CreateNextDayDialog
+import com.karyar.app.ui.screens.attendance.DateConflictDialog
 import com.karyar.app.ui.screens.attendance.DayActionOptionsDialog
 import com.karyar.app.ui.screens.attendance.DeleteDayConfirmDialog
 import com.karyar.app.ui.screens.attendance.EditDateFolderDialog
@@ -86,6 +87,7 @@ fun WorkersScreen(
     val dateFolders by viewModel.dateFolders.collectAsState()
     val selectedDateFolder by viewModel.selectedDateFolder.collectAsState()
     val searchQuery by viewModel.workerSearchQuery.collectAsState()
+    val pendingDateConflict by viewModel.pendingDateConflict.collectAsState()
 
     var isCreatingNextDay by remember { mutableStateOf(false) }
     var isDashboardExpanded by rememberSaveable { mutableStateOf(false) }
@@ -493,6 +495,18 @@ fun WorkersScreen(
     if (editingDateFolder != null) {
         EditDateFolderDialog(
             dateFolder = editingDateFolder!!,
+            existingAttendances = attendanceList,
+            workers = allWorkers,
+            onMergeConflict = { date, dayOfWeek, title ->
+                viewModel.mergeDateFolder(
+                    editingDateFolder!!.copy(
+                        date = date,
+                        dayOfWeek = dayOfWeek,
+                        title = title
+                    )
+                )
+                editingDateFolder = null
+            },
             onDismiss = { editingDateFolder = null },
             onConfirm = { date, dayOfWeek, title ->
                 viewModel.updateDateFolder(
@@ -504,6 +518,17 @@ fun WorkersScreen(
                 )
                 editingDateFolder = null
             }
+        )
+    }
+
+    if (pendingDateConflict != null) {
+        val conflict = pendingDateConflict!!
+        DateConflictDialog(
+            message = conflict.message,
+            targetDate = conflict.targetDate,
+            conflictingWorkerNames = conflict.conflictingWorkers.map { it.name },
+            onDismiss = { viewModel.dismissDateConflict() },
+            onMerge = { viewModel.confirmMergeDateFolder() }
         )
     }
 

@@ -32,7 +32,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.ui.WorkerViewModel
+import com.karyar.app.ui.components.AddExpenseDialog
+import com.karyar.app.ui.components.ExpensesManagementSection
 import com.karyar.app.ui.components.HairlineCard
 import com.karyar.app.ui.components.StatusBadge
 import com.karyar.app.ui.theme.AmberAccent
@@ -75,6 +80,8 @@ fun ReportsScreen(
     val workers by viewModel.workers.collectAsState()
     val attendanceList by viewModel.attendanceList.collectAsState()
     val expenses by viewModel.expenses.collectAsState()
+    val selectedDailyDate by viewModel.selectedDailyDate.collectAsState()
+    var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
 
     val activeProject = folder?.name ?: "پروژه کارگاهی"
     val activeEmployer = folder?.employerName ?: "کارفرما"
@@ -262,6 +269,18 @@ fun ReportsScreen(
             }
         }
 
+        // بخش مدیریت و ثبت هزینه‌های فردی و گروهی کارگاه
+        if (folder != null) {
+            item {
+                ExpensesManagementSection(
+                    expenses = expenses,
+                    workers = workers,
+                    onAddExpenseClick = { showAddExpenseDialog = true },
+                    onDeleteExpense = { viewModel.deleteExpense(it) }
+                )
+            }
+        }
+
         // 2. Section Header
         item {
             Row(
@@ -304,6 +323,18 @@ fun ReportsScreen(
         items(performances, key = { it.worker.id }) { perf ->
             WorkerPaySlipCard(perf)
         }
+    }
+
+    if (showAddExpenseDialog) {
+        AddExpenseDialog(
+            workers = workers,
+            initialDate = selectedDailyDate.ifBlank { JalaliCalendar.todayString() },
+            onDismiss = { showAddExpenseDialog = false },
+            onConfirm = { newExpense ->
+                viewModel.addExpense(newExpense)
+                showAddExpenseDialog = false
+            }
+        )
     }
 }
 
@@ -405,17 +436,17 @@ private fun WorkerPaySlipCard(perf: WorkerPerformance) {
                     .padding(10.dp)
             ) {
                 if (perf.worker.isHourlyEnabled) {
-                    ReportRow("ساعات کارکرد عادی:", "${Formatters.toPersianDigits(perf.hourlyHours)} ساعت")
+                    ReportRow("ساعات کارکرد عادی:", Formatters.formatHours(perf.hourlyHours))
                 } else {
                     ReportRow("وضعیت کارکرد:", perf.formatWorkSummary())
                     ReportRow("دستمزد پایه تجمیعی:", Formatters.formatCurrency(perf.baseWageTotal))
                 }
 
                 if (perf.hourlyPayTotal > 0 || perf.hourlyHours > 0) {
-                    ReportRow("دستمزد ساعتی (${Formatters.toPersianDigits(perf.hourlyHours)} ساعت):", "+${Formatters.formatCurrency(perf.hourlyPayTotal)}", CyanAccent)
+                    ReportRow("دستمزد ساعتی (${Formatters.formatHours(perf.hourlyHours)}):", "+${Formatters.formatCurrency(perf.hourlyPayTotal)}", CyanAccent)
                 }
                 if (perf.overtimeHours > 0) {
-                    ReportRow("اضافه کاری (${Formatters.toPersianDigits(perf.overtimeHours)} ساعت):", "+${Formatters.formatCurrency(perf.overtimePayTotal)}", AmberAccent)
+                    ReportRow("اضافه کاری (${Formatters.formatHours(perf.overtimeHours)}):", "+${Formatters.formatCurrency(perf.overtimePayTotal)}", AmberAccent)
                 }
                 if (perf.totalAllowances > 0) {
                     ReportRow("(+) مجموع کمک‌هزینه‌های افزایشی:", "+${Formatters.formatCurrency(perf.totalAllowances)}", EmeraldAccent)

@@ -69,8 +69,7 @@ data class WorkerPerformance(
             parts.add("(${Formatters.toPersianDigits(halfDaysCount)} روز: نصف‌روز)")
         }
         if (hourlyDaysCount > 0 || hourlyHours > 0.0) {
-            val hStr = Formatters.toPersianDigits(hourlyHours.toString().removeSuffix(".0"))
-            parts.add("(${hStr} ساعت: ساعتی)")
+            parts.add("(${Formatters.formatHours(hourlyHours)}: ساعتی)")
         }
         return if (parts.isNotEmpty()) parts.joinToString(" ") else "${Formatters.toPersianDigits(totalShifts)} روز"
     }

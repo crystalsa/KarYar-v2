@@ -108,8 +108,13 @@ enum class MainTab(val title: String, val icon: ImageVector, val tag: String) {
 }
 
 class MainActivity : ComponentActivity() {
+    private var timeChangeReceiver: android.content.BroadcastReceiver? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        com.karyar.app.util.JalaliCalendar.refreshToday()
+        timeChangeReceiver = com.karyar.app.util.JalaliCalendar.registerTimeChangeReceiver(this)
 
         // Clean up old export files from cache/exports on app startup
         try {
@@ -130,6 +135,21 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        com.karyar.app.util.JalaliCalendar.refreshToday()
+    }
+
+    override fun onDestroy() {
+        timeChangeReceiver?.let { receiver ->
+            try {
+                unregisterReceiver(receiver)
+            } catch (_: Exception) {}
+        }
+        timeChangeReceiver = null
+        super.onDestroy()
+    }
 }
 
 @Composable
@@ -139,6 +159,7 @@ fun WorkerManagementApp(
     val currentFolder by viewModel.currentFolder.collectAsState()
     val workerSearchQuery by viewModel.workerSearchQuery.collectAsState()
     val isWorkerSearchVisible by viewModel.isWorkerSearchVisible.collectAsState()
+    val migrationReport by viewModel.migrationReport.collectAsState()
     var selectedTab by remember { mutableStateOf(MainTab.DASHBOARD) }
     var showTopMenu by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
@@ -146,8 +167,16 @@ fun WorkerManagementApp(
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(viewModel) {
-        viewModel.snackbarMessages.collect { message ->
-            snackbarHostState.showSnackbar(message)
+        viewModel.snackbarEvents.collect { event ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = snackbarHostState.showSnackbar(
+                message = event.message,
+                actionLabel = event.actionLabel,
+                duration = androidx.compose.material3.SnackbarDuration.Short
+            )
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed && event.withUndo) {
+                viewModel.undoLastAttendanceAction()
+            }
         }
     }
 
@@ -563,6 +592,43 @@ fun WorkerManagementApp(
             dismissButton = {
                 TextButton(onClick = { showSampleConfirm = false }) {
                     Text("انصراف")
+                }
+            }
+        )
+    }
+
+    migrationReport?.let { report ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissMigrationReport() },
+            title = {
+                Text(
+                    text = "گزارش به‌روزرسانی داده‌ها",
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.testTag("migration_report_dialog_title")
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = report.formatDialogMessage(),
+                        modifier = Modifier.testTag("migration_report_dialog_message")
+                    )
+                    if (!report.backupFilePath.isNullOrBlank()) {
+                        Text(
+                            text = "نسخه پشتیبان رکوردهای حذف‌شده جهت بازیابی دستی در پوشه db_backups ذخیره شد.",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.dismissMigrationReport() },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
+                    modifier = Modifier.testTag("migration_report_confirm_button")
+                ) {
+                    Text("تأیید", color = Color.White)
                 }
             }
         )

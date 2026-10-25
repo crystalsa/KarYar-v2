@@ -70,10 +70,10 @@ fun AttendanceWorkerRow(
     val isFullDay = WageCalculator.isFullDay(worker, attendance)
     val isHourlyChecked = isHourlyWorker && !isAbsent
     val otHours = if (attendance != null) attendance.overtimeHours else worker.overtimeHours
-    val hasOvertime = otHours > 0.0
+    val hasOvertime = otHours > 0.0 && !isAbsent
 
     val hHours = if (attendance != null) attendance.hourlyHours else (if (worker.hourlyHours > 0.0) worker.hourlyHours else 0.0)
-    val hasHourly = hHours > 0.0
+    val hasHourly = hHours > 0.0 && !isAbsent
 
     Row(
         modifier = Modifier
@@ -121,8 +121,8 @@ fun AttendanceWorkerRow(
                     else if (isFullDay) add("تمام روز")
                     else if (isHalfDay) add("نصف روز")
                     else if (isAbsent) add("غایب")
-                    if (hasHourly && !isHourlyChecked) add("${Formatters.toPersianDigits(hHours.toString().removeSuffix(".0"))} ساعت ساعتی")
-                    if (hasOvertime) add("+${Formatters.toPersianDigits(otHours.toString().removeSuffix(".0"))} ساعت اضافه")
+                    if (hasHourly && !isHourlyChecked) add("${Formatters.formatHours(hHours)} ساعتی")
+                    if (hasOvertime) add("+${Formatters.formatHours(otHours)} اضافه")
                 }.joinToString(" • ")
 
                 Text(

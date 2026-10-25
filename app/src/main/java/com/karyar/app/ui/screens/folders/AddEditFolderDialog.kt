@@ -53,6 +53,7 @@ import com.karyar.app.ui.components.LoadingOutlinedButton
 import com.karyar.app.ui.theme.AmberAccent
 import com.karyar.app.ui.theme.CyanAccent
 import com.karyar.app.ui.theme.EmeraldAccent
+import com.karyar.app.util.Formatters
 
 private val FOLDER_COLORS = listOf(
     0xFFD97706L, // Amber
@@ -73,6 +74,12 @@ fun AddEditFolderDialog(
     var employerName by remember { mutableStateOf(initialFolder?.employerName ?: "") }
     var notes by remember { mutableStateOf(initialFolder?.notes ?: "") }
     var selectedColor by remember { mutableLongStateOf(initialFolder?.colorTag ?: FOLDER_COLORS[0]) }
+    var nameTouched by remember { mutableStateOf(false) }
+
+    val nameError = Formatters.validateRequiredName(name, "نام کارگاه / پروژه")
+    val foremanError = Formatters.validateOptionalName(foremanName, "نام سرکارگر")
+    val employerError = Formatters.validateOptionalName(employerName, "نام کارفرما")
+    val isFormValid = nameError == null && foremanError == null && employerError == null
 
     Dialog(onDismissRequest = onDismiss) {
         HairlineCard(
@@ -116,14 +123,28 @@ fun AddEditFolderDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Name (Workplace Name)
+                val showNameError = nameError != null && (nameTouched || name.isNotEmpty())
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = {
+                        name = it
+                        nameTouched = true
+                    },
                     label = { Text("نام کارگاه / پروژه", fontSize = 12.sp) },
                     placeholder = { Text("مثلاً برج سپهر", fontSize = 11.sp) },
                     leadingIcon = {
                         Icon(Icons.Default.Business, contentDescription = null, tint = AmberAccent, modifier = Modifier.size(16.dp))
                     },
+                    isError = showNameError,
+                    supportingText = if (showNameError) {
+                        {
+                            Text(
+                                text = nameError!!,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("folder_name_input"),
@@ -141,6 +162,16 @@ fun AddEditFolderDialog(
                     leadingIcon = {
                         Icon(Icons.Default.Engineering, contentDescription = null, tint = EmeraldAccent, modifier = Modifier.size(16.dp))
                     },
+                    isError = foremanError != null,
+                    supportingText = if (foremanError != null) {
+                        {
+                            Text(
+                                text = foremanError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("foreman_name_input"),
@@ -158,6 +189,16 @@ fun AddEditFolderDialog(
                     leadingIcon = {
                         Icon(Icons.Default.Person, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
                     },
+                    isError = employerError != null,
+                    supportingText = if (employerError != null) {
+                        {
+                            Text(
+                                text = employerError,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 10.5.sp
+                            )
+                        }
+                    } else null,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -227,14 +268,15 @@ fun AddEditFolderDialog(
                         text = if (initialFolder == null) "ایجاد" else "ذخیره",
                         icon = Icons.Default.Folder,
                         onClick = {
-                            if (name.isNotBlank()) {
+                            nameTouched = true
+                            if (isFormValid) {
                                 onConfirm(name.trim(), foremanName.trim(), employerName.trim(), notes.trim(), selectedColor)
                             }
                         },
                         modifier = Modifier.weight(1.3f),
                         containerColor = AmberAccent,
                         height = 40.dp,
-                        enabled = name.isNotBlank(),
+                        enabled = isFormValid,
                         testTag = "submit_folder_button"
                     )
                 }
@@ -242,3 +284,4 @@ fun AddEditFolderDialog(
         }
     }
 }
+

@@ -168,6 +168,41 @@ fun EditDayAttendanceDialog(
     val parsedHHours = Formatters.parseDouble(hourlyHoursStr)
     val parsedOtHours = if (hasOvertime) Formatters.parseDouble(overtimeHoursStr) else 0.0
 
+    val dailyWageError = if ((status == AttendanceStatus.FULL_DAY || status == AttendanceStatus.HALF_DAY) && isDailyWageEnabled) {
+        Formatters.validateWageInput(dailyWageStr, fieldLabel = "دستمزد روزانه")
+    } else null
+
+    val hourlyHoursError = if (status == AttendanceStatus.HOURLY || status == AttendanceStatus.HALF_DAY) {
+        Formatters.validateHoursInput(hourlyHoursStr, fieldLabel = "ساعت کارکرد", maxHours = Formatters.MAX_HOURLY_HOURS)
+    } else null
+
+    val hourlyRateError = if (status == AttendanceStatus.HOURLY) {
+        Formatters.validateWageInput(hourlyWageRateStr, fieldLabel = "نرخ دستمزد ساعتی")
+    } else null
+
+    val overtimeHoursError = if (status != AttendanceStatus.ABSENT && hasOvertime) {
+        Formatters.validateHoursInput(overtimeHoursStr, fieldLabel = "ساعت اضافه‌کاری", maxHours = Formatters.MAX_OVERTIME_HOURS)
+    } else null
+
+    val overtimeRateError = if (status != AttendanceStatus.ABSENT && hasOvertime) {
+        Formatters.validateWageInput(overtimeRateStr, fieldLabel = "نرخ اضافه‌کاری")
+    } else null
+
+    val accommodationError = Formatters.validateWageInput(accommodationAllowanceStr, fieldLabel = "کمک‌هزینه مسکن")
+    val foodError = Formatters.validateWageInput(foodAllowanceStr, fieldLabel = "کمک‌هزینه خوراک")
+    val transitError = Formatters.validateWageInput(transitAllowanceStr, fieldLabel = "کمک‌هزینه ایاب و ذهاب")
+    val medicalError = Formatters.validateWageInput(medicalAllowanceStr, fieldLabel = "کمک‌هزینه درمان")
+
+    val isFormValid = dailyWageError == null &&
+        hourlyHoursError == null &&
+        hourlyRateError == null &&
+        overtimeHoursError == null &&
+        overtimeRateError == null &&
+        accommodationError == null &&
+        foodError == null &&
+        transitError == null &&
+        medicalError == null
+
     Dialog(onDismissRequest = onDismiss) {
         HairlineCard(
             modifier = Modifier.fillMaxWidth(),
@@ -318,7 +353,7 @@ fun EditDayAttendanceDialog(
                                         color = if (isDailyWageEnabled) AmberAccent else MaterialTheme.colorScheme.onSurface
                                     )
                                 }
-                                if (isDailyWageEnabled && dailyWageStr.isNotBlank()) {
+                                if (isDailyWageEnabled && dailyWageStr.isNotBlank() && dailyWageError == null) {
                                     Text(
                                         text = Formatters.formatCurrency(Formatters.parsePrice(dailyWageStr)),
                                         fontSize = 11.sp,
@@ -337,7 +372,19 @@ fun EditDayAttendanceDialog(
                                         label = { Text("دستمزد روزانه این روز (تومان)", fontSize = 11.sp) },
                                         placeholder = { Text("مثلاً ۱,۲۰۰,۰۰۰ یا ۰", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.fillMaxWidth(),
+                                        isError = dailyWageError != null,
+                                        supportingText = if (dailyWageError != null) {
+                                            {
+                                                Text(
+                                                    text = dailyWageError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.5.sp
+                                                )
+                                            }
+                                        } else null,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("edit_day_daily_wage_input"),
                                         singleLine = true
                                     )
                                 }
@@ -367,12 +414,14 @@ fun EditDayAttendanceDialog(
                                     fontWeight = FontWeight.Bold,
                                     color = CyanAccent
                                 )
-                                Text(
-                                    text = "${Formatters.toPersianDigits(parsedHHours.toString().removeSuffix(".0"))} ساعت",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = CyanAccent
-                                )
+                                if (hourlyHoursError == null) {
+                                    Text(
+                                        text = Formatters.formatHours(parsedHHours),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CyanAccent
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedTextField(
@@ -386,7 +435,19 @@ fun EditDayAttendanceDialog(
                                 },
                                 label = { Text("ساعت کارکرد (مثلاً ۵ یا ۰)", fontSize = 11.sp) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.fillMaxWidth(),
+                                isError = hourlyHoursError != null,
+                                supportingText = if (hourlyHoursError != null) {
+                                    {
+                                        Text(
+                                            text = hourlyHoursError,
+                                            color = MaterialTheme.colorScheme.error,
+                                            fontSize = 10.5.sp
+                                        )
+                                    }
+                                } else null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("edit_day_hourly_hours_input"),
                                 singleLine = true
                             )
                         }
@@ -423,9 +484,9 @@ fun EditDayAttendanceDialog(
                                         color = if (hasOvertime) AmberAccent else MaterialTheme.colorScheme.onSurface
                                     )
                                 }
-                                if (hasOvertime && parsedOtHours > 0.0) {
+                                if (hasOvertime && parsedOtHours > 0.0 && overtimeHoursError == null) {
                                     Text(
-                                        text = "${Formatters.toPersianDigits(parsedOtHours.toString().removeSuffix(".0"))} ساعت",
+                                        text = Formatters.formatHours(parsedOtHours),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = AmberAccent
@@ -447,7 +508,19 @@ fun EditDayAttendanceDialog(
                                         },
                                         label = { Text("تعداد ساعت اضافه کار (مثلاً ۲ یا ۰)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        modifier = Modifier.fillMaxWidth(),
+                                        isError = overtimeHoursError != null,
+                                        supportingText = if (overtimeHoursError != null) {
+                                            {
+                                                Text(
+                                                    text = overtimeHoursError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.5.sp
+                                                )
+                                            }
+                                        } else null,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("edit_day_overtime_hours_input"),
                                         singleLine = true
                                     )
                                 }
@@ -499,6 +572,16 @@ fun EditDayAttendanceDialog(
                                         onValueChange = { dailyWageStr = Formatters.formatPriceInput(it) },
                                         label = { Text("دستمزد روزانه این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        isError = dailyWageError != null,
+                                        supportingText = if (dailyWageError != null) {
+                                            {
+                                                Text(
+                                                    text = dailyWageError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
                                         modifier = Modifier.fillMaxWidth(),
                                         singleLine = true
                                     )
@@ -510,7 +593,19 @@ fun EditDayAttendanceDialog(
                                         onValueChange = { hourlyWageRateStr = Formatters.formatPriceInput(it) },
                                         label = { Text("مبلغ هر ساعت کار این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.fillMaxWidth(),
+                                        isError = hourlyRateError != null,
+                                        supportingText = if (hourlyRateError != null) {
+                                            {
+                                                Text(
+                                                    text = hourlyRateError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("edit_day_hourly_rate_input"),
                                         singleLine = true
                                     )
                                 }
@@ -521,7 +616,19 @@ fun EditDayAttendanceDialog(
                                         onValueChange = { overtimeRateStr = Formatters.formatPriceInput(it) },
                                         label = { Text("نرخ اضافه کار این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.fillMaxWidth(),
+                                        isError = overtimeRateError != null,
+                                        supportingText = if (overtimeRateError != null) {
+                                            {
+                                                Text(
+                                                    text = overtimeRateError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("edit_day_overtime_rate_input"),
                                         singleLine = true
                                     )
                                 }
@@ -537,6 +644,16 @@ fun EditDayAttendanceDialog(
                                         onValueChange = { accommodationAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("کمک‌هزینه مسکن این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        isError = accommodationError != null,
+                                        supportingText = if (accommodationError != null) {
+                                            {
+                                                Text(
+                                                    text = accommodationError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -559,6 +676,16 @@ fun EditDayAttendanceDialog(
                                         onValueChange = { foodAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("کمک‌هزینه خوراک این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        isError = foodError != null,
+                                        supportingText = if (foodError != null) {
+                                            {
+                                                Text(
+                                                    text = foodError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -581,6 +708,16 @@ fun EditDayAttendanceDialog(
                                         onValueChange = { transitAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("ایاب و ذهاب این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        isError = transitError != null,
+                                        supportingText = if (transitError != null) {
+                                            {
+                                                Text(
+                                                    text = transitError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -603,6 +740,16 @@ fun EditDayAttendanceDialog(
                                         onValueChange = { medicalAllowanceStr = Formatters.formatPriceInput(it) },
                                         label = { Text("کمک‌هزینه درمان این روز (تومان)", fontSize = 11.sp) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        isError = medicalError != null,
+                                        supportingText = if (medicalError != null) {
+                                            {
+                                                Text(
+                                                    text = medicalError,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        } else null,
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -628,6 +775,7 @@ fun EditDayAttendanceDialog(
                     LoadingButton(
                         text = "ذخیره کارکرد این روز",
                         onClick = {
+                            if (!isFormValid) return@LoadingButton
                             val baseAtt = attendance ?: WageCalculator.defaultAttendanceFor(
                                 worker = worker,
                                 status = status,
@@ -675,6 +823,7 @@ fun EditDayAttendanceDialog(
                             )
                             onConfirm(updated)
                         },
+                        enabled = isFormValid,
                         modifier = Modifier.weight(1f),
                         containerColor = EmeraldAccent,
                         height = 40.dp,
@@ -696,6 +845,7 @@ fun EditDayAttendanceDialog(
         }
     }
 }
+
 
 @Composable
 private fun StatusChip(

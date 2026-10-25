@@ -64,7 +64,7 @@ fun CreateNextDayDialog(
 ) {
     // Determine suggested initial date: Next day from latest date, or today from phone
     val (initialDate, initialDow) = remember(baseDate) {
-        if (!baseDate.isNullOrBlank()) {
+        if (!baseDate.isNullOrBlank() && JalaliCalendar.isValidDate(baseDate)) {
             JalaliCalendar.nextDay(baseDate)
         } else {
             Pair(JalaliCalendar.todayString(), JalaliCalendar.todayDayOfWeek())
@@ -73,8 +73,13 @@ fun CreateNextDayDialog(
 
     var date by remember { mutableStateOf(initialDate) }
     var dayOfWeek by remember { mutableStateOf(initialDow) }
+    var dateError by remember { mutableStateOf<String?>(JalaliCalendar.validateDateError(initialDate)) }
 
-    val (year, month, day) = JalaliCalendar.parseDate(date)
+    val fallbackToday = remember { JalaliCalendar.today() }
+    val parsedDate = JalaliCalendar.parseDateOrNull(date)
+    val year = parsedDate?.first ?: fallbackToday.year
+    val month = parsedDate?.second ?: fallbackToday.month
+    val day = parsedDate?.third ?: fallbackToday.day
     val monthName = JalaliCalendar.getMonthName(month)
     val daysInCurrentMonth = JalaliCalendar.getDaysInMonth(year, month)
     val isLeap = JalaliCalendar.isLeapYear(year)
@@ -139,9 +144,15 @@ fun CreateNextDayDialog(
                             .weight(1.2f)
                             .clip(RoundedCornerShape(10.dp))
                             .clickable {
-                                val (nextD, nextDow) = JalaliCalendar.nextDay(date)
-                                date = nextD
-                                dayOfWeek = nextDow
+                                val err = JalaliCalendar.validateDateError(date)
+                                if (err == null) {
+                                    val (nextD, nextDow) = JalaliCalendar.nextDay(date)
+                                    date = nextD
+                                    dayOfWeek = nextDow
+                                    dateError = null
+                                } else {
+                                    dateError = err
+                                }
                             }
                             .testTag("advance_next_day_button")
                     ) {
@@ -174,9 +185,15 @@ fun CreateNextDayDialog(
                             .weight(1f)
                             .clip(RoundedCornerShape(10.dp))
                             .clickable {
-                                val (prevD, prevDow) = JalaliCalendar.previousDay(date)
-                                date = prevD
-                                dayOfWeek = prevDow
+                                val err = JalaliCalendar.validateDateError(date)
+                                if (err == null) {
+                                    val (prevD, prevDow) = JalaliCalendar.previousDay(date)
+                                    date = prevD
+                                    dayOfWeek = prevDow
+                                    dateError = null
+                                } else {
+                                    dateError = err
+                                }
                             }
                     ) {
                         Row(
@@ -209,6 +226,7 @@ fun CreateNextDayDialog(
                             .clickable {
                                 date = JalaliCalendar.todayString()
                                 dayOfWeek = JalaliCalendar.todayDayOfWeek()
+                                dateError = null
                             }
                     ) {
                         Row(
@@ -257,16 +275,22 @@ fun CreateNextDayDialog(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable {
-                                    val currentIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dayOfWeek).let { if (it == -1) 0 else it }
-                                    val targetIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dow).let { if (it == -1) 0 else it }
-                                    var diff = targetIdx - currentIdx
-                                    if (diff < 0) diff += 7
-                                    if (diff > 0) {
-                                        val (newD, newDow) = JalaliCalendar.addDays(date, diff)
-                                        date = newD
-                                        dayOfWeek = newDow
+                                    val err = JalaliCalendar.validateDateError(date)
+                                    if (err == null) {
+                                        val currentIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dayOfWeek).let { if (it == -1) 0 else it }
+                                        val targetIdx = JalaliCalendar.DAYS_OF_WEEK.indexOf(dow).let { if (it == -1) 0 else it }
+                                        var diff = targetIdx - currentIdx
+                                        if (diff < 0) diff += 7
+                                        if (diff > 0) {
+                                            val (newD, newDow) = JalaliCalendar.addDays(date, diff)
+                                            date = newD
+                                            dayOfWeek = newDow
+                                        } else {
+                                            dayOfWeek = dow
+                                        }
+                                        dateError = null
                                     } else {
-                                        dayOfWeek = dow
+                                        dateError = err
                                     }
                                 }
                         ) {
@@ -413,10 +437,21 @@ fun CreateNextDayDialog(
                         if (month == 12 && isLeap) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "سال $year کبیسه است (اسفند ۳۰ روزه)",
+                                text = "سال ${Formatters.toPersianDigits(year)} کبیسه است (اسفند ۳۰ روزه)",
                                 fontSize = 10.5.sp,
                                 color = EmeraldAccent,
                                 fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        if (dateError != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = dateError!!,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -438,7 +473,16 @@ fun CreateNextDayDialog(
                     LoadingButton(
                         text = "ساخت روز",
                         icon = Icons.Default.CalendarMonth,
-                        onClick = { onConfirm(date, dayOfWeek) },
+                        onClick = {
+                            val err = JalaliCalendar.validateDateError(date)
+                            if (err != null) {
+                                dateError = err
+                            } else {
+                                val (y, m, d) = JalaliCalendar.parseDate(date)
+                                val normalizedDate = JalaliCalendar.formatDate(y, m, d)
+                                onConfirm(normalizedDate, dayOfWeek)
+                            }
+                        },
                         modifier = Modifier.weight(1.3f),
                         containerColor = AmberAccent,
                         height = 42.dp,

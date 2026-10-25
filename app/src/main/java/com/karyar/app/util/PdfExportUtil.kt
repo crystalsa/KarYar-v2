@@ -316,7 +316,7 @@ object PdfExportUtil {
 
         // 5. Overtime (بدون مخفف «س»، نوشتن کامل «ساعت»)
         val otStr = if (p.overtimeHours > 0) {
-            "${Formatters.toPersianDigits(p.overtimeHours.toString().removeSuffix(".0"))} ساعت"
+            Formatters.formatHours(p.overtimeHours)
         } else {
             "-"
         }
@@ -383,8 +383,8 @@ object PdfExportUtil {
         }
 
         // Line 1 in Landscape (3 columns across 772f)
-        drawRtlText(canvas, "• کل ساعات کارکرد عادی: ${Formatters.toPersianDigits(analytics.totalWorkHours)} ساعت", 540f, y + 24f, itemPaint, 250)
-        drawRtlText(canvas, "• کل ساعات اضافه کاری: ${Formatters.toPersianDigits(analytics.totalOvertimeHours)} ساعت", 285f, y + 24f, itemPaint, 240)
+        drawRtlText(canvas, "• کل ساعات کارکرد عادی: ${Formatters.formatHours(analytics.totalWorkHours)}", 540f, y + 24f, itemPaint, 250)
+        drawRtlText(canvas, "• کل ساعات اضافه کاری: ${Formatters.formatHours(analytics.totalOvertimeHours)}", 285f, y + 24f, itemPaint, 240)
         drawRtlText(canvas, "• دستمزد ساعتی پرداختی: ${Formatters.formatCurrency(analytics.totalHourlyPaid)}", 45f, y + 24f, itemPaint, 230)
 
         // Line 2

@@ -8,8 +8,11 @@ import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
 import com.karyar.app.ui.WorkerViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -104,5 +107,66 @@ class ViewModelInitPreservesDataTest {
         assertEquals("Project name must not be altered", customProjectName, foldersAfter[0].name)
         assertEquals("All date folders must be preserved", 4, dateFoldersAfter.size)
         assertEquals("All workers must be preserved", 7, workersAfter.size)
+    }
+
+    @Test
+    fun testViewModelInitWithSynchronousFlowOf_doesNotCrash() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+
+        val folderA = WorkplaceFolderEntity(
+            id = 101L,
+            name = "پروژه همگام الف",
+            foremanName = "سرکارگر الف",
+            employerName = "کارفرما الف"
+        )
+        val folderB = WorkplaceFolderEntity(
+            id = 102L,
+            name = "پروژه همگام ب",
+            foremanName = "سرکارگر ب",
+            employerName = "کارفرما ب"
+        )
+
+        // ۱. ساخت ViewModel با یک Flow کاملاً همگام (flowOf) که بلافاصله در لحظه init مقدار منتشر می‌کند
+        val vmWithItems = WorkerViewModel(
+            application = app,
+            foldersFlow = flowOf(listOf(folderA, folderB))
+        )
+
+        assertNotNull(vmWithItems.currentFolder)
+        assertNotNull(vmWithItems.selectedDateFolder)
+        assertNotNull(vmWithItems.selectedDailyDate)
+        assertNotNull(vmWithItems.allFolders)
+        assertNotNull(vmWithItems.dateFolders)
+        assertNotNull(vmWithItems.workers)
+        assertNotNull(vmWithItems.attendanceList)
+        assertNotNull(vmWithItems.expenses)
+        assertNotNull(vmWithItems.dailyBookkeeping)
+        assertNotNull(vmWithItems.financialSummary)
+        assertNotNull(vmWithItems.workerPerformances)
+        assertNotNull(vmWithItems.analytics)
+
+        // به دلیل اجرای همگام (UNDISPATCHED) روی flowOf، مقدار currentFolder بلافاصله بدون کرش مقداردهی شده است
+        assertEquals(folderA, vmWithItems.currentFolder.value)
+        assertNull(vmWithItems.selectedDateFolder.value)
+
+        // ۲. بررسی حالتی که flowOf ابتدا لیست پر، سپس لیست خالی (ریست شدن currentFolder و selectedDateFolder) و دوباره لیست جدید منتشر می‌کند
+        val vmMultiEmit = WorkerViewModel(
+            application = app,
+            foldersFlow = flowOf(
+                listOf(folderA),
+                emptyList(),
+                listOf(folderB)
+            )
+        )
+        assertEquals(folderB, vmMultiEmit.currentFolder.value)
+        assertNull(vmMultiEmit.selectedDateFolder.value)
+
+        // ۳. بررسی حالتی که flowOf لیست خالی منتشر می‌کند
+        val vmEmpty = WorkerViewModel(
+            application = app,
+            foldersFlow = flowOf(emptyList())
+        )
+        assertNull(vmEmpty.currentFolder.value)
+        assertNull(vmEmpty.selectedDateFolder.value)
     }
 }

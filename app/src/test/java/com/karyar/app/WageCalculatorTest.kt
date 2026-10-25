@@ -3,12 +3,19 @@ package com.karyar.app
 import com.karyar.app.data.local.entity.AttendanceEntity
 import com.karyar.app.data.local.entity.AttendanceStatus
 import com.karyar.app.data.local.entity.WorkerEntity
+import com.karyar.app.util.Formatters
 import com.karyar.app.util.WageCalculator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class WageCalculatorTest {
 
     private val baseDailyWorker = WorkerEntity(
@@ -1260,4 +1267,342 @@ class WageCalculatorTest {
         assertEquals(0L, resZeroOtHours.overtimePay)
         assertEquals(1_000_000L, resZeroOtHours.netPayout)
     }
+
+    // 37. اعتبارسنجی ثبت هزینه (مبلغ > ۰، سقف معقول، اجباری بودن workerId در حالت INDIVIDUAL)
+    @Test
+    fun testValidateExpense_enforcesAmountBoundsAndMandatoryWorkerForIndividual() {
+        val validWorkers = setOf(10L, 20L)
+
+        // ۱. هزینه فردی بدون کارگر (workerId == null) -> خطا
+        val indivWithoutWorker = com.karyar.app.data.local.entity.ExpenseEntity(
+            title = "مساعده",
+            category = "OTHER",
+            scope = "INDIVIDUAL",
+            impactType = "DEDUCTION",
+            workerId = null,
+            amount = 200_000L,
+            date = "1405/02/10"
+        )
+        assertTrue(WageCalculator.validateExpense(indivWithoutWorker, validWorkers) != null)
+
+        // ۲. هزینه با مبلغ صفر یا منفی -> خطا
+        val zeroAmount = indivWithoutWorker.copy(workerId = 10L, amount = 0L)
+        val negativeAmount = indivWithoutWorker.copy(workerId = 10L, amount = -50_000L)
+        assertTrue(WageCalculator.validateExpense(zeroAmount, validWorkers) != null)
+        assertTrue(WageCalculator.validateExpense(negativeAmount, validWorkers) != null)
+
+        // ۳. هزینه بیش از سقف معقول -> خطا
+        val excessiveAmount = indivWithoutWorker.copy(
+            workerId = 10L,
+            amount = WageCalculator.MAX_EXPENSE_AMOUNT + 1L
+        )
+        assertTrue(WageCalculator.validateExpense(excessiveAmount, validWorkers) != null)
+
+        // ۴. هزینه فردی معتبر با کارگر مشخص -> بدون خطا
+        val validIndividual = indivWithoutWorker.copy(workerId = 10L, amount = 500_000L)
+        assertEquals(null, WageCalculator.validateExpense(validIndividual, validWorkers))
+
+        // ۵. هزینه گروهی معتبر بدون کارگر -> بدون خطا
+        val validGroup = com.karyar.app.data.local.entity.ExpenseEntity(
+            title = "ناهار کارگاه",
+            category = "FOOD",
+            scope = "GROUP",
+            impactType = "DEDUCTION",
+            workerId = null,
+            amount = 450_000L,
+            date = "1405/02/10"
+        )
+        assertEquals(null, WageCalculator.validateExpense(validGroup, validWorkers))
+    }
+
+    // 38. تست جامع یکسان‌بودن جمع حساب روزانه و جمع کل پروژه با ترکیبی از هزینه‌های فردی (افزایشی/کاهشی) و گروهی در تمام دسته‌ها
+    @Test
+    fun testSumOfDailyBookkeepingEqualsProjectTotal_withAllExpenseCategoriesScopesAndImpacts() {
+        val w1 = baseDailyWorker.copy(
+            id = 951L,
+            name = "رضا محمدی",
+            baseDailyWage = 1_200_000L,
+            transitAllowance = 50_000L,
+            transitImpact = "ALLOWANCE"
+        )
+        val w2 = baseHourlyWorker.copy(
+            id = 952L,
+            name = "مهدی حسینی",
+            isHourlyEnabled = true,
+            hourlyWageRate = 180_000L,
+            baseHourlyWage = 180_000L
+        )
+        val w3 = baseDailyWorker.copy(
+            id = 953L,
+            name = "سعید کریمی",
+            baseDailyWage = 900_000L,
+            accommodationAllowance = 100_000L,
+            accommodationImpact = "DEDUCTION"
+        )
+        val workers = listOf(w1, w2, w3)
+
+        val attendances = listOf(
+            // روز اول: هر سه حاضر
+            AttendanceEntity(workerId = 951L, date = "1405/03/01", status = AttendanceStatus.FULL_DAY, regularHours = 8.0, overtimeHours = 2.0, overtimeRate = 220_000L),
+            AttendanceEntity(workerId = 952L, date = "1405/03/01", status = AttendanceStatus.HOURLY, hourlyHours = 7.0, hourlyWageRate = 180_000L),
+            AttendanceEntity(workerId = 953L, date = "1405/03/01", status = AttendanceStatus.HALF_DAY, regularHours = 4.0),
+            // روز دوم: کارگر ۳ غایب است (کسورات اسکان باید همچنان اعمال شود)
+            AttendanceEntity(workerId = 951L, date = "1405/03/02", status = AttendanceStatus.FULL_DAY, regularHours = 8.0),
+            AttendanceEntity(workerId = 952L, date = "1405/03/02", status = AttendanceStatus.HOURLY, hourlyHours = 5.0, hourlyWageRate = 180_000L),
+            AttendanceEntity(workerId = 953L, date = "1405/03/02", status = AttendanceStatus.ABSENT)
+        )
+
+        // شامل روز سوم ("1405/03/03") که فقط هزینه ثبت شده است
+        val expenses = listOf(
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 501L, folderId = 1L, title = "سرویس کارگاه", category = "TRANSIT",
+                scope = "GROUP", impactType = "DEDUCTION", workerId = null, amount = 300_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 502L, folderId = 1L, title = "کمک‌هزینه ایاب و ذهاب رضا", category = "TRANSIT",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 951L, amount = 70_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 503L, folderId = 1L, title = "ناهار مهدی", category = "FOOD",
+                scope = "INDIVIDUAL", impactType = "DEDUCTION", workerId = 952L, amount = 95_000L, date = "1405/03/01"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 504L, folderId = 1L, title = "اجاره خوابگاه", category = "ACCOMMODATION",
+                scope = "GROUP", impactType = "DEDUCTION", workerId = null, amount = 500_000L, date = "1405/03/02"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 505L, folderId = 1L, title = "کمک‌هزینه دارو سعید", category = "MEDICAL",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 953L, amount = 140_000L, date = "1405/03/02"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 506L, folderId = 1L, title = "مساعده نقدی رضا", category = "OTHER",
+                scope = "INDIVIDUAL", impactType = "DEDUCTION", workerId = 951L, amount = 250_000L, date = "1405/03/03"
+            ),
+            com.karyar.app.data.local.entity.ExpenseEntity(
+                id = 507L, folderId = 1L, title = "پاداش ویژه مهدی", category = "OTHER",
+                scope = "INDIVIDUAL", impactType = "ALLOWANCE", workerId = 952L, amount = 110_000L, date = "1405/03/03"
+            )
+        )
+
+        val allDates = (attendances.map { it.date } + expenses.map { it.date }).distinct().sorted()
+        val sumOfDailyBookkeeping = allDates.sumOf { dateStr ->
+            WageCalculator.calculateDailyBookkeeping(
+                dateStr = dateStr,
+                workers = workers,
+                attendances = attendances,
+                expenses = expenses
+            ).grandDailyCost
+        }
+
+        val projectSummary = WageCalculator.calculateFinancialSummary(
+            workers = workers,
+            attendances = attendances,
+            expenses = expenses,
+            todayStr = "1405/03/03"
+        )
+
+        // ۱. جمع حساب روزانه تمامی روزها باید دقیقاً برابر جمع کل پروژه باشد
+        assertEquals(sumOfDailyBookkeeping, projectSummary.grandTotalProjectCost)
+
+        // ۲. همچنین جمع خالص خام (rawNetPayout) تمام کارگران باید دقیقاً برابر جمع کل پروژه باشد
+        val sumOfWorkersRawNet = projectSummary.workerPerformances.sumOf { it.rawNetPayout }
+        assertEquals(projectSummary.grandTotalProjectCost, sumOfWorkersRawNet)
+    }
+
+    // ==================== تست‌های سقف ورودی‌ها، جلوگیری از سرریز و اعتبارسنجی کد ملی ====================
+
+    @Test
+    fun `boundary validation for wage amounts accepts 0 to 1_000_000_000 and rejects out of bounds`() {
+        assertNull(Formatters.validateWageAmount(0L))
+        assertNull(Formatters.validateWageAmount(1_000_000_000L))
+        assertEquals(1_000_000_000L, Formatters.MAX_WAGE_AMOUNT)
+
+        val aboveMaxError = Formatters.validateWageAmount(1_000_000_001L)
+        assertTrue(aboveMaxError != null && aboveMaxError.contains("بیشتر از"))
+
+        val negativeError = Formatters.validateWageAmount(-1L)
+        assertTrue(negativeError != null && negativeError.contains("منفی"))
+
+        // ورودی متنی خیلی بزرگ (> 64-bit) نباید به صفر تبدیل شود بلکه باید خطای سقف بدهد
+        assertEquals(Long.MAX_VALUE, Formatters.parsePrice("999999999999999999999999"))
+        assertEquals(Long.MIN_VALUE, Formatters.parsePrice("-999999999999999999999999"))
+        assertTrue(Formatters.validateWageInput("1,000,000,001") != null)
+        assertNull(Formatters.validateWageInput("1,000,000,000"))
+    }
+
+    @Test
+    fun `boundary validation for hours accepts 0 to 24 and rejects negative or above 24 or NaN`() {
+        assertNull(Formatters.validateHours(0.0))
+        assertNull(Formatters.validateHours(24.0))
+        assertNull(Formatters.validateHoursInput("24"))
+        assertNull(Formatters.validateHoursInput("۲۳.۵"))
+
+        assertTrue(Formatters.validateHours(24.001) != null)
+        assertTrue(Formatters.validateHours(-0.1) != null)
+        assertTrue(Formatters.validateHours(Double.NaN) != null)
+        assertTrue(Formatters.validateHours(Double.POSITIVE_INFINITY) != null)
+        assertTrue(Formatters.validateHoursInput("24.1") != null)
+        assertTrue(Formatters.validateHoursInput("25") != null)
+    }
+
+    @Test
+    fun `boundary validation for names accepts 1 to 60 characters and rejects blank or above 60`() {
+        val exact60 = "الف".repeat(20) // 60 chars
+        val over60 = exact60 + "ب" // 61 chars
+
+        assertEquals(60, exact60.length)
+        assertNull(Formatters.validateRequiredName(exact60))
+        assertNull(Formatters.validateOptionalName(exact60))
+        assertNull(Formatters.validateOptionalName(""))
+
+        assertTrue(Formatters.validateRequiredName("") != null)
+        assertTrue(Formatters.validateRequiredName("   ") != null)
+        assertTrue(Formatters.validateRequiredName(over60) != null)
+        assertTrue(Formatters.validateOptionalName(over60) != null)
+    }
+
+    @Test
+    fun `iranian national ID check digit validation handles valid, invalid, repeated digits, and foreign worker bypass`() {
+        // کدهای ملی معتبر واقعی از نظر الگوریتم رقم کنترل (هم با ارقام انگلیسی و هم فارسی)
+        // 0013542419 -> sum = 0*10 + 0*9 + 1*8 + 3*7 + 5*6 + 4*5 + 2*4 + 4*3 + 1*2 = 8+21+30+20+8+12+2 = 101; 101 % 11 = 2; 11 - 2 = 9
+        assertTrue(Formatters.isValidIranianNationalId("0013542419"))
+        assertTrue(Formatters.isValidIranianNationalId("۰۰۱۳۵۴۲۴۱۹"))
+        assertNull(Formatters.validateIranianNationalId("0013542419"))
+
+        // حالتی که باقیمانده بزرگتر یا مساوی ۲ است:
+        assertTrue(Formatters.isValidIranianNationalId("0499370899"))
+        // 0010000003 -> 1*8 = 8; 8 % 11 = 8; 11 - 8 = 3
+        assertTrue(Formatters.isValidIranianNationalId("0010000003"))
+        // 0010000011 -> 1*8 + 1*2 = 10; 10 % 11 = 10; 11 - 10 = 1
+        assertTrue(Formatters.isValidIranianNationalId("0010000011"))
+        // حالتی که باقیمانده کمتر از ۲ است (rem = 0 و rem = 1):
+        // 0010000100 -> 1*8 + 1*3 = 11; 11 % 11 = 0 -> check=0
+        assertTrue(Formatters.isValidIranianNationalId("0010000100"))
+        // 0010000021 -> 1*8 + 2*2 = 12; 12 % 11 = 1 -> check=1
+        assertTrue(Formatters.isValidIranianNationalId("0010000021"))
+
+        // رقم کنترل اشتباه
+        assertFalse(Formatters.isValidIranianNationalId("0013542418"))
+        assertTrue(Formatters.validateIranianNationalId("0013542418") != null)
+
+        // طول نامعتبر
+        assertFalse(Formatters.isValidIranianNationalId("123456789"))
+        assertFalse(Formatters.isValidIranianNationalId("12345678901"))
+
+        // ارقام تکراری مثل 1111111111 یا 0000000000 نامعتبرند حتی اگر رابطه ریاضی برقرار باشد
+        for (d in '0'..'9') {
+            val repeated = d.toString().repeat(10)
+            assertFalse("Repeated digits $repeated must be rejected", Formatters.isValidIranianNationalId(repeated))
+        }
+
+        // بررسی رد کردن هشدار برای کارگران خارجی در validateWorker
+        val foreignWorker = baseDailyWorker.copy(name = "احمد خان", nationalId = "1234567890")
+        assertTrue(WageCalculator.validateWorker(foreignWorker, allowForeignNationalId = false) != null)
+        assertNull(WageCalculator.validateWorker(foreignWorker, allowForeignNationalId = true))
+    }
+
+    @Test
+    fun `validateWorker and validateAttendance enforce boundary constants`() {
+        val validWorker = baseDailyWorker.copy(
+            name = "کارگر معتبر",
+            baseDailyWage = 1_000_000_000L,
+            hourlyWageRate = 1_000_000_000L,
+            overtimeRate = 1_000_000_000L
+        )
+        assertNull(WageCalculator.validateWorker(validWorker))
+
+        val excessiveWageWorker = validWorker.copy(baseDailyWage = 1_000_000_001L)
+        assertTrue(WageCalculator.validateWorker(excessiveWageWorker) != null)
+
+        val excessiveHoursWorker = validWorker.copy(hourlyHours = 24.5)
+        assertTrue(WageCalculator.validateWorker(excessiveHoursWorker) != null)
+
+        val validAttendance = AttendanceEntity(
+            id = 1L,
+            workerId = 1L,
+            date = "1405/01/01",
+            status = AttendanceStatus.FULL_DAY,
+            regularHours = 24.0,
+            overtimeHours = 24.0,
+            hourlyHours = 24.0,
+            dailyWage = 1_000_000_000L
+        )
+        assertNull(WageCalculator.validateAttendance(validAttendance))
+
+        val invalidAttendanceHours = validAttendance.copy(overtimeHours = 24.1)
+        assertTrue(WageCalculator.validateAttendance(invalidAttendanceHours) != null)
+
+        val invalidAttendanceWage = validAttendance.copy(dailyWage = 1_000_000_001L)
+        assertTrue(WageCalculator.validateAttendance(invalidAttendanceWage) != null)
+    }
+
+    @Test(expected = ArithmeticException::class)
+    fun `calculateDay throws ArithmeticException when hours multiplied by rate overflows Long`() {
+        val worker = baseHourlyWorker.copy(
+            isHourlyEnabled = true,
+            hourlyWageRate = Long.MAX_VALUE / 2,
+            hourlyHours = 3.0
+        )
+        val attendance = AttendanceEntity(
+            id = 1L,
+            workerId = 2L,
+            date = "1405/01/01",
+            status = AttendanceStatus.HOURLY,
+            hourlyHours = 3.0,
+            hourlyWageRate = Long.MAX_VALUE / 2
+        )
+        WageCalculator.calculateDay(worker, attendance)
+    }
+
+    @Test(expected = ArithmeticException::class)
+    fun `calculateDay throws ArithmeticException when sum of wages and allowances overflows Long`() {
+        val worker = baseDailyWorker.copy(
+            baseDailyWage = Long.MAX_VALUE - 100L,
+            isOvertimeEnabled = true,
+            overtimeRate = 200L,
+            overtimeHours = 1.0
+        )
+        val attendance = AttendanceEntity(
+            id = 1L,
+            workerId = 1L,
+            date = "1405/01/01",
+            status = AttendanceStatus.FULL_DAY,
+            dailyWage = Long.MAX_VALUE - 100L,
+            overtimeHours = 1.0,
+            overtimeRate = 200L
+        )
+        WageCalculator.calculateDay(worker, attendance)
+    }
+
+    @Test(expected = ArithmeticException::class)
+    fun `calculateWorkerPerformance throws ArithmeticException when multi-day totals overflow Long`() {
+        val worker = baseDailyWorker.copy(baseDailyWage = Long.MAX_VALUE / 2 + 100L)
+        val attendances = listOf(
+            AttendanceEntity(
+                id = 1L,
+                workerId = 1L,
+                date = "1405/01/01",
+                status = AttendanceStatus.FULL_DAY,
+                dailyWage = Long.MAX_VALUE / 2 + 100L
+            ),
+            AttendanceEntity(
+                id = 2L,
+                workerId = 1L,
+                date = "1405/01/02",
+                status = AttendanceStatus.FULL_DAY,
+                dailyWage = Long.MAX_VALUE / 2 + 100L
+            )
+        )
+        WageCalculator.calculateWorkerPerformance(
+            worker = worker,
+            attendances = attendances
+        )
+    }
+
+    @Test(expected = ArithmeticException::class)
+    fun `roundToLong throws ArithmeticException on values exceeding Long_MAX_VALUE`() {
+        WageCalculator.roundToLong(1e20)
+    }
 }
+
+
