@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -40,6 +42,14 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+data class ProblematicRecordInfo(
+    val attendanceId: Long,
+    val workerId: Long,
+    val workerName: String,
+    val date: String,
+    val issues: List<String>
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerViewModel(
@@ -103,6 +113,10 @@ class WorkerViewModel(
     // Snackbar message events for user feedback (including Undo actions)
     private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
+
+    // Calculation error state surfaced when abnormal/overflowing financial values are detected
+    private val _calculationError = MutableStateFlow<String?>(null)
+    val calculationError: StateFlow<String?> = _calculationError.asStateFlow()
 
     private val _snackbarEvents = MutableSharedFlow<SnackbarEvent>(extraBufferCapacity = 8)
     val snackbarEvents: SharedFlow<SnackbarEvent> = _snackbarEvents.asSharedFlow()
@@ -226,13 +240,22 @@ class WorkerViewModel(
         selectedDailyDateAttendances,
         selectedDailyDateExpenses
     ) { dateStr, workerList, dayAttList, dayExpList ->
-        WageCalculator.calculateDailyBookkeeping(
+        val daily = WageCalculator.calculateDailyBookkeeping(
             dateStr = dateStr,
             workers = workerList,
             attendances = dayAttList,
             expenses = dayExpList
         )
+        if (daily.invalidAttendanceIds.isNotEmpty()) {
+            _calculationError.value = CALCULATION_ERROR_MESSAGE
+        }
+        daily
     }
+        .catch { e ->
+            Log.e(TAG, "Error in dailyBookkeeping calculation flow", e)
+            _calculationError.value = CALCULATION_ERROR_MESSAGE
+            emit(DailyBookkeeping())
+        }
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DailyBookkeeping())
@@ -244,20 +267,73 @@ class WorkerViewModel(
         expenses,
         JalaliCalendar.todayFlow
     ) { workerList, attList, expList, todayStr ->
-        WageCalculator.calculateFinancialSummary(
+        val summary = WageCalculator.calculateFinancialSummary(
             workers = workerList,
             attendances = attList,
             expenses = expList,
             todayStr = todayStr
         )
+        if (summary.invalidAttendanceIds.isNotEmpty()) {
+            _calculationError.value = CALCULATION_ERROR_MESSAGE
+        } else {
+            _calculationError.value = null
+        }
+        summary
     }
+        .catch { e ->
+            Log.e(TAG, "Error in financialSummary calculation flow", e)
+            _calculationError.value = CALCULATION_ERROR_MESSAGE
+            emit(FinancialSummary.EMPTY)
+        }
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FinancialSummary.EMPTY)
 
+    // Problematic attendance records exceeding MAX_WAGE_AMOUNT or hours > 24 or causing overflow
+    val problematicRecords: StateFlow<List<ProblematicRecordInfo>> = combine(
+        workers,
+        attendanceList,
+        financialSummary
+    ) { workerList, attList, summary ->
+        val workerById = workerList.associateBy { it.id }
+        val invalidSet = summary.invalidAttendanceIds.toHashSet()
+        val records = mutableListOf<ProblematicRecordInfo>()
+        for (att in attList) {
+            val worker = workerById[att.workerId]
+            val anomalies = WageCalculator.findAttendanceAnomalies(worker, att).toMutableList()
+            if (att.id in invalidSet && anomalies.isEmpty()) {
+                anomalies.add("سرریز محاسباتی در جمع مبالغ")
+            }
+            if (anomalies.isNotEmpty()) {
+                records.add(
+                    ProblematicRecordInfo(
+                        attendanceId = att.id,
+                        workerId = att.workerId,
+                        workerName = worker?.name ?: "کارگر #${att.workerId}",
+                        date = att.date,
+                        issues = anomalies
+                    )
+                )
+            }
+        }
+        records.toList()
+    }
+        .catch { e ->
+            Log.e(TAG, "Error in problematicRecords flow", e)
+            emit(emptyList())
+        }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // Worker Performance Summaries directly from unified FinancialSummary
     val workerPerformances: StateFlow<List<WorkerPerformance>> = financialSummary
         .map { it.workerPerformances }
+        .catch { e ->
+            Log.e(TAG, "Error in workerPerformances calculation flow", e)
+            _calculationError.value = CALCULATION_ERROR_MESSAGE
+            emit(emptyList())
+        }
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -303,6 +379,11 @@ class WorkerViewModel(
             totalWorkerDebt = summary.totalWorkerDebt
         )
     }
+        .catch { e ->
+            Log.e(TAG, "Error in analytics calculation flow", e)
+            _calculationError.value = CALCULATION_ERROR_MESSAGE
+            emit(DashboardAnalytics())
+        }
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardAnalytics())
@@ -838,7 +919,7 @@ class WorkerViewModel(
         val workplaceName = folder?.name ?: ""
         val foremanName = folder?.foremanName ?: ""
         val employerName = folder?.employerName ?: ""
-        val epochDay = JalaliCalendar.toEpochDay(dateStr)
+        val epochDay = JalaliCalendar.safeEpochDay(dateStr)
         val activeDf = selectedDateFolder.value
         val dfId = if (activeDf?.date == dateStr) activeDf.id else 0L
         val requestedStatus = WageCalculator.parseStatus(status)
@@ -1105,6 +1186,11 @@ class WorkerViewModel(
             currentFolder.value = null
             selectedDateFolder.value = null
         }
+    }
+
+    companion object {
+        private const val TAG = "WorkerViewModel"
+        const val CALCULATION_ERROR_MESSAGE = "مقدار مالی غیرعادی در داده‌ها شناسایی شد؛ محاسبات متوقف شد"
     }
 }
 

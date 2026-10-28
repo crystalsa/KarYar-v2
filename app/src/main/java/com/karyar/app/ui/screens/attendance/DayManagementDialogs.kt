@@ -554,12 +554,18 @@ fun EditDateFolderDialog(
                                 label = "روز ($daysInCurrentMonth روزه)",
                                 value = Formatters.toPersianDigits(day),
                                 onIncrement = {
-                                    val (nextD, nextDow) = JalaliCalendar.nextDay(date)
+                                    val baseDate = JalaliCalendar.formatDate(year, month, day.coerceIn(1, daysInCurrentMonth))
+                                    val (nextD, nextDow) = JalaliCalendar.nextDayOrNull(date)
+                                        ?: JalaliCalendar.nextDayOrNull(baseDate)
+                                        ?: (baseDate to JalaliCalendar.getDayOfWeek(baseDate))
                                     date = nextD
                                     dayOfWeek = nextDow
                                 },
                                 onDecrement = {
-                                    val (prevD, prevDow) = JalaliCalendar.previousDay(date)
+                                    val baseDate = JalaliCalendar.formatDate(year, month, day.coerceIn(1, daysInCurrentMonth))
+                                    val (prevD, prevDow) = JalaliCalendar.previousDayOrNull(date)
+                                        ?: JalaliCalendar.previousDayOrNull(baseDate)
+                                        ?: (baseDate to JalaliCalendar.getDayOfWeek(baseDate))
                                     date = prevD
                                     dayOfWeek = prevDow
                                 },

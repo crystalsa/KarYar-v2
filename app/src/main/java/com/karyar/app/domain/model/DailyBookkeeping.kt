@@ -21,7 +21,8 @@ data class DailyBookkeeping(
     val foodCost: Long = 0L,
     val medicalCost: Long = 0L,
     val attendances: List<AttendanceEntity> = emptyList(),
-    val expenses: List<ExpenseEntity> = emptyList()
+    val expenses: List<ExpenseEntity> = emptyList(),
+    val invalidAttendanceIds: List<Long> = emptyList()
 ) {
     val totalDailyCost: Long get() = grandDailyCost
     val totalWagesPaid: Long get() = totalDailyWages + totalHourlyPay

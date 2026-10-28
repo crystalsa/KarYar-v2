@@ -1,7 +1,9 @@
 package com.karyar.app
 
+import android.content.Context
 import androidx.room.testing.MigrationTestHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.karyar.app.data.local.AppDatabase
 import org.junit.Assert.assertEquals
@@ -1237,5 +1239,178 @@ class MigrationTest {
         }
 
         db.close()
+    }
+
+    @Test
+    fun migrate7To9_repairsLegacyInvalidDate1404_12_30_handlesCollisionsAndSortingDoesNotCrash() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val backupDir = java.io.File(context.filesDir, AppDatabase.BACKUP_DIR_NAME)
+        backupDir.deleteRecursively()
+        AppDatabase.saveMigrationReport(0, 0, "", null, context)
+
+        var db = helper.createDatabase(TEST_DB + "-v7-to-v9", 7)
+
+        db.execSQL("""
+            INSERT INTO `workplace_folders` (`id`, `name`, `foremanName`, `employerName`, `colorTag`, `createdAt`, `notes`)
+            VALUES
+                (1, 'پروژه تست برخورد تاریخ ۱۴۰۴/۱۲/۳۰', 'سرکارگر', 'کارفرما', 16086790, '1404/12/01', ''),
+                (2, 'پروژه تست بدون برخورد ۱۴۰۴/۱۲/۳۰', 'سرکارگر ۲', 'کارفرما ۲', 16086790, '1404/12/01', '')
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `workers` (
+                `id`, `folderId`, `name`, `role`, `phone`, `nationalId`, `baseDailyWage`, `baseHourlyWage`,
+                `isHourlyEnabled`, `hourlyWageRate`, `hourlyHours`, `isOvertimeEnabled`, `overtimeRate`, `overtimeHours`,
+                `isActive`, `notes`, `colorTag`, `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`,
+                `accommodationAllowance`, `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `createdAt`
+            ) VALUES
+                (10, 1, 'کارگر بدون تداخل', 'بنا', '', '', 1000000, 0, 0, 0, 0.0, 0, 0, 0.0, 1, '', 16086790, 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1000),
+                (20, 1, 'کارگر دارای تداخل', 'جوشکار', '', '', 1200000, 0, 0, 0, 0.0, 0, 0, 0.0, 1, '', 16086790, 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1000),
+                (30, 2, 'کارگر پروژه دوم', 'آرماتوربند', '', '', 900000, 0, 0, 0, 0.0, 0, 0, 0.0, 1, '', 16086790, 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1000)
+        """.trimIndent())
+
+        // Folder 1 has both 1404/12/30 (invalid) and 1405/01/01 (valid) -> collision in date_folders
+        // Folder 2 has 1404/12/30 (invalid, no 1405/01/01) and 1404/07/31 (invalid 31st day in 30-day month)
+        db.execSQL("""
+            INSERT INTO `date_folders` (`id`, `folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`, `epochDay`)
+            VALUES
+                (101, 1, '1404/12/29', 'پنج‌شنبه', 'آخر اسفند', '', 1000, 0),
+                (102, 1, '1404/12/30', 'جمعه', 'روز نامعتبر قدیم', 'یادداشت ادغام‌شده', 2000, 0),
+                (103, 1, '1405/01/01', 'جمعه', 'اول فروردین ۱۴۰۵', '', 3000, 0),
+                (201, 2, '1404/12/30', 'جمعه', 'انتقال به ۱۴۰۵/۰۱/۰۱', '', 4000, 0),
+                (202, 2, '1404/07/31', 'پنج‌شنبه', 'مهر ۳۱ روزه نامعتبر', '', 5000, 0)
+        """.trimIndent())
+
+        // Worker 10 has 1404/12/30 only (no collision -> moves to 1405/01/01)
+        // Worker 20 has both 1404/12/30 and 1405/01/01 (collision -> 1405/01/01 kept, 1404/12/30 backed up & deleted)
+        // Worker 30 has 1404/12/30 and 1404/07/31 (moves to 1405/01/01 and 1404/07/30)
+        db.execSQL("""
+            INSERT INTO `attendance` (
+                `id`, `folderId`, `workerId`, `dateFolderId`, `date`, `epochDay`, `status`, `timestamp`,
+                `entryTime`, `exitTime`, `regularHours`, `overtimeHours`, `overtimeRate`, `hourlyWageRate`,
+                `hourlyHours`, `dailyWage`, `hourlyWage`, `workplaceName`, `employerName`, `foremanName`, `notes`,
+                `transitAllowance`, `transitImpact`, `foodAllowance`, `foodImpact`, `accommodationAllowance`,
+                `accommodationImpact`, `medicalAllowance`, `medicalImpact`, `hasCustomAllowances`
+            ) VALUES
+                (501, 1, 10, 102, '1404/12/30', 0, 'FULL_DAY', 1000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 1000000, 0, '', '', '', 'انتقال مستقیم', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1),
+                (502, 1, 20, 102, '1404/12/30', 0, 'HALF_DAY', 2000, '08:00', '12:00', 4.0, 0.0, 0, 0, 0.0, 600000, 0, '', '', '', 'رکورد برخوردی قدیمی', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1),
+                (503, 1, 20, 103, '1405/01/01', 0, 'FULL_DAY', 3000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 1200000, 0, '', '', '', 'رکورد مقصد اصلی', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1),
+                (504, 2, 30, 201, '1404/12/30', 0, 'FULL_DAY', 4000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 900000, 0, '', '', '', '', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1),
+                (505, 2, 30, 202, '1404/07/31', 0, 'FULL_DAY', 5000, '08:00', '17:00', 8.0, 0.0, 0, 0, 0.0, 900000, 0, '', '', '', '', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 0, 'ALLOWANCE', 1)
+        """.trimIndent())
+
+        db.execSQL("""
+            INSERT INTO `expenses` (
+                `id`, `folderId`, `title`, `category`, `scope`, `impactType`, `workerId`, `workerName`,
+                `amount`, `accommodationDays`, `date`, `epochDay`, `timestamp`, `workplaceName`, `employerName`, `foremanName`, `notes`
+            ) VALUES
+                (601, 1, 'هزینه اسفند نامعتبر', 'FOOD', 'GROUP', 'DEDUCTION', NULL, NULL, 300000, 0, '1404/12/30', 0, 1000, '', '', '', '')
+        """.trimIndent())
+
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            TEST_DB + "-v7-to-v9",
+            9,
+            true,
+            AppDatabase.MIGRATION_7_8,
+            AppDatabase.MIGRATION_8_9
+        )
+
+        val epoch14050101 = com.karyar.app.util.JalaliCalendar.toEpochDay("1405/01/01")
+        val epoch14040730 = com.karyar.app.util.JalaliCalendar.toEpochDay("1404/07/30")
+
+        // 1. Verify all date_folders have valid dates & accurate epochDays, and sorting does not crash
+        val migratedDateFolders = mutableListOf<com.karyar.app.data.local.entity.DateFolderEntity>()
+        db.query("SELECT `id`, `folderId`, `date`, `dayOfWeek`, `title`, `notes`, `createdAt`, `epochDay` FROM `date_folders` ORDER BY `id` ASC").use { c ->
+            while (c.moveToNext()) {
+                val dateStr = c.getString(2)
+                org.junit.Assert.assertNotNull(
+                    "date_folders date '$dateStr' must be valid after MIGRATION_8_9",
+                    com.karyar.app.util.JalaliCalendar.parseDateOrNull(dateStr)
+                )
+                migratedDateFolders.add(
+                    com.karyar.app.data.local.entity.DateFolderEntity(
+                        id = c.getLong(0),
+                        folderId = c.getLong(1),
+                        date = dateStr,
+                        dayOfWeek = c.getString(3),
+                        title = c.getString(4),
+                        notes = c.getString(5),
+                        createdAt = c.getLong(6),
+                        epochDay = c.getLong(7)
+                    )
+                )
+            }
+        }
+        // 102 collided with 103 and was merged into 103; 201 -> 1405/01/01; 202 -> 1404/07/30
+        assertEquals(4, migratedDateFolders.size)
+        val df103 = migratedDateFolders.first { it.id == 103L }
+        assertEquals("1405/01/01", df103.date)
+        assertEquals(epoch14050101, df103.epochDay)
+        assertEquals("یادداشت ادغام‌شده", df103.notes)
+
+        val df201 = migratedDateFolders.first { it.id == 201L }
+        assertEquals("1405/01/01", df201.date)
+        assertEquals(epoch14050101, df201.epochDay)
+
+        val df202 = migratedDateFolders.first { it.id == 202L }
+        assertEquals("1404/07/30", df202.date)
+        assertEquals(epoch14040730, df202.epochDay)
+
+        // Verify AttendanceScreen / WorkersScreen sorting by epochDay works without crashing
+        val sortedFolders = migratedDateFolders.sortedWith(compareBy({ it.epochDay }, { it.id }))
+        assertEquals(4, sortedFolders.size)
+
+        // 2. Verify attendance rows: 501 moved to 1405/01/01; 502 collided with 503 and was backed up; 503 preserved; 504 -> 1405/01/01; 505 -> 1404/07/30
+        val migratedAttendances = readAttendancesV7(db)
+        assertEquals(4, migratedAttendances.size)
+        for (att in migratedAttendances) {
+            org.junit.Assert.assertNotNull(
+                "attendance date '${att.date}' must be valid after MIGRATION_8_9",
+                com.karyar.app.util.JalaliCalendar.parseDateOrNull(att.date)
+            )
+            assertEquals(com.karyar.app.util.JalaliCalendar.toEpochDay(att.date), att.epochDay)
+        }
+        val att501 = migratedAttendances.first { it.id == 501L }
+        assertEquals("1405/01/01", att501.date)
+        assertEquals(103L, att501.dateFolderId)
+
+        val att503 = migratedAttendances.first { it.id == 503L }
+        assertEquals("1405/01/01", att503.date)
+        assertEquals(1200000L, att503.dailyWage)
+
+        val att504 = migratedAttendances.first { it.id == 504L }
+        assertEquals("1405/01/01", att504.date)
+
+        val att505 = migratedAttendances.first { it.id == 505L }
+        assertEquals("1404/07/30", att505.date)
+
+        // 3. Verify expenses: 601 moved from 1404/12/30 to 1405/01/01
+        val migratedExpenses = readExpenses(db)
+        assertEquals(1, migratedExpenses.size)
+        assertEquals("1405/01/01", migratedExpenses.first().date)
+        assertEquals(epoch14050101, migratedExpenses.first().epochDay)
+
+        // 4. Verify colliding rows (date_folder 102 and attendance 502) were backed up to JSON and reported
+        val report = AppDatabase.migrationReportFlow.value
+        org.junit.Assert.assertNotNull("MigrationReport should be emitted when colliding rows are merged", report)
+        assertEquals(2, report!!.deletedDuplicatesCount)
+        org.junit.Assert.assertNotNull(report.backupFilePath)
+        val backupJsonFile = java.io.File(report.backupFilePath!!)
+        org.junit.Assert.assertTrue("Backup JSON file must exist", backupJsonFile.exists())
+        val jsonRoot = org.json.JSONObject(backupJsonFile.readText(Charsets.UTF_8))
+        assertEquals(2, jsonRoot.getInt("deletedDuplicatesCount"))
+        val rowsArray = jsonRoot.getJSONArray("deletedRows")
+        assertEquals(2, rowsArray.length())
+        val reasons = (0 until rowsArray.length()).map { rowsArray.getJSONObject(it).getString("reason") }.toSet()
+        val dates = (0 until rowsArray.length()).map { rowsArray.getJSONObject(it).getString("date") }.toSet()
+        org.junit.Assert.assertTrue(reasons.contains("DUPLICATE_ATTENDANCE_ON_INVALID_DATE_FIX"))
+        org.junit.Assert.assertTrue(reasons.contains("DUPLICATE_DATE_FOLDER_ON_INVALID_DATE_FIX"))
+        org.junit.Assert.assertTrue(dates.contains("1404/12/30"))
+
+        db.close()
+        backupDir.deleteRecursively()
+        AppDatabase.saveMigrationReport(0, 0, "", null, context)
     }
 }

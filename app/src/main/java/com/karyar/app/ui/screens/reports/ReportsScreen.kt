@@ -81,6 +81,8 @@ fun ReportsScreen(
     val attendanceList by viewModel.attendanceList.collectAsState()
     val expenses by viewModel.expenses.collectAsState()
     val selectedDailyDate by viewModel.selectedDailyDate.collectAsState()
+    val calculationError by viewModel.calculationError.collectAsState()
+    val problematicRecords by viewModel.problematicRecords.collectAsState()
     var showAddExpenseDialog by rememberSaveable { mutableStateOf(false) }
 
     val activeProject = folder?.name ?: "پروژه کارگاهی"
@@ -94,6 +96,15 @@ fun ReportsScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp)
     ) {
+        if (calculationError != null) {
+            item {
+                com.karyar.app.ui.components.CalculationErrorBanner(
+                    errorMessage = calculationError!!,
+                    problematicRecords = problematicRecords
+                )
+            }
+        }
+
         // 1. Header & Export Buttons Banner
         item {
             HairlineCard(

@@ -13,8 +13,20 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
+import java.util.Locale
+import kotlin.math.abs
 
 object ExcelExportUtil {
+
+    /**
+     * فرمت عددی ساعت با ارقام لاتین، ممیز نقطه و حداکثر ۲ رقم اعشار با [Locale.US] ثابت،
+     * تا در Excel / LibreOffice / Google Sheets به‌عنوان عدد قابل جمع (`SUM` / `AVERAGE`) شناخته شود.
+     */
+    fun formatCsvHours(hours: Double): String {
+        if (!hours.isFinite() || abs(hours) < 1e-9) return "0"
+        val formatted = String.format(Locale.US, "%.2f", hours)
+        return formatted.trimEnd('0').trimEnd('.').ifEmpty { "0" }
+    }
 
     /**
      * Helper to safely escape CSV fields according to RFC 4180 and prevent CSV injection.
@@ -129,9 +141,9 @@ object ExcelExportUtil {
                         p.worker.role,
                         p.formatWorkSummary(),
                         p.totalShifts,
-                        Formatters.formatHours(p.regularHours),
-                        Formatters.formatHours(p.hourlyHours),
-                        Formatters.formatHours(p.overtimeHours),
+                        formatCsvHours(p.regularHours),
+                        formatCsvHours(p.hourlyHours),
+                        formatCsvHours(p.overtimeHours),
                         p.baseWageTotal,
                         p.hourlyPayTotal,
                         p.overtimePayTotal,
@@ -158,9 +170,9 @@ object ExcelExportUtil {
                     "وضعیت حضور",
                     "ساعت ورود",
                     "ساعت خروج",
-                    "ساعات عادی",
-                    "ساعت کار ساعتی",
-                    "ساعات اضافه کار",
+                    "ساعات عادی (ساعت)",
+                    "ساعت کار ساعتی (ساعت)",
+                    "ساعات اضافه کار (ساعت)",
                     "دستمزد روزانه (تومان)",
                     "دستمزد ساعتی (تومان)",
                     "محل کار",
@@ -190,9 +202,9 @@ object ExcelExportUtil {
                         statusStr,
                         att.entryTime,
                         att.exitTime,
-                        Formatters.formatHours(att.regularHours),
-                        Formatters.formatHours(att.hourlyHours),
-                        Formatters.formatHours(att.overtimeHours),
+                        formatCsvHours(att.regularHours),
+                        formatCsvHours(att.hourlyHours),
+                        formatCsvHours(att.overtimeHours),
                         att.dailyWage,
                         att.hourlyWage,
                         att.workplaceName,
@@ -245,8 +257,8 @@ object ExcelExportUtil {
                     writer.writeRow("تعداد پرسنل فعال", analytics.activeWorkersCount)
                     writer.writeRow("تعداد روزهای کاری کارگاه (تقویمی)", analytics.totalWorkDaysCount)
                     writer.writeRow("مجموع کارکرد پرسنل (نفر-روز / شیفت)", analytics.totalPersonDays)
-                    writer.writeRow("مجموع ساعات کارکرد عادی", Formatters.formatHours(analytics.totalWorkHours))
-                    writer.writeRow("مجموع ساعات اضافه کاری", Formatters.formatHours(analytics.totalOvertimeHours))
+                    writer.writeRow("مجموع ساعات کارکرد عادی (ساعت)", formatCsvHours(analytics.totalWorkHours))
+                    writer.writeRow("مجموع ساعات اضافه کاری (ساعت)", formatCsvHours(analytics.totalOvertimeHours))
                     writer.writeRow("مجموع دستمزد پایه پرداخت‌شده (تومان)", analytics.totalWagesPaid)
                     writer.writeRow("مجموع اضافه کاری و ساعتی (تومان)", analytics.totalOvertimePaid + analytics.totalHourlyPaid)
                     writer.writeRow("کل هزینه‌های جانبی کارگاه (تومان)", analytics.grandTotalExpenses)

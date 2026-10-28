@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.ui.WorkerViewModel
+import com.karyar.app.ui.components.CalculationErrorBanner
 import com.karyar.app.ui.components.GlowStatCard
 import com.karyar.app.ui.components.HairlineCard
 import com.karyar.app.ui.components.IconicsBox
@@ -105,6 +106,8 @@ fun DashboardScreen(
     val workerPerformances by viewModel.workerPerformances.collectAsState()
     val dateFolders by viewModel.dateFolders.collectAsState()
     val attendanceList by viewModel.attendanceList.collectAsState()
+    val calculationError by viewModel.calculationError.collectAsState()
+    val problematicRecords by viewModel.problematicRecords.collectAsState()
 
     // 1. When app starts fresh without any folder selected:
     // "صفحه اول کار وقتی شروع میشه باید خالی باشه"
@@ -254,6 +257,15 @@ fun DashboardScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(top = 10.dp, bottom = 100.dp)
     ) {
+        if (calculationError != null) {
+            item {
+                CalculationErrorBanner(
+                    errorMessage = calculationError!!,
+                    problematicRecords = problematicRecords
+                )
+            }
+        }
+
         // بخش ۱: کل اطلاعات مالی پروژه تا امروز
         item {
             HairlineCard(

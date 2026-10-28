@@ -36,7 +36,7 @@ data class ExpenseEntity(
     val amount: Long,               // مبلغ هزینه (تومان)
     val accommodationDays: Int = 0, // مدت زمان اسکان به روز
     val date: String,               // تاریخ شمسی
-    val epochDay: Long = JalaliCalendar.toEpochDay(date), // تاریخ به صورت epochDay
+    val epochDay: Long = JalaliCalendar.safeEpochDay(date), // تاریخ به صورت epochDay
     val timestamp: Long = System.currentTimeMillis(),
     val workplaceName: String = "", // نام محل کار / پروژه
     val employerName: String = "",  // نام کارفرما

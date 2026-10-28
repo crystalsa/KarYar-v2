@@ -278,4 +278,109 @@ class ExcelExportEscapeTest {
         }
         return rows
     }
+
+    @Test
+    fun testExportCsvAllHourColumnsAreParseableWithDoubleParseDouble() {
+        val tempDir = java.nio.file.Files.createTempDirectory("karyar_csv_hours_test").toFile()
+        val testContext = object : android.content.ContextWrapper(null) {
+            override fun getCacheDir(): java.io.File = tempDir
+        }
+
+        val worker = com.karyar.app.data.local.entity.WorkerEntity(
+            id = 77L,
+            folderId = 1L,
+            name = "مهدی کریمی",
+            role = "جوشکار",
+            baseDailyWage = 1_000_000L
+        )
+        val perf = com.karyar.app.domain.model.WorkerPerformance(
+            worker = worker,
+            totalShifts = 2,
+            regularHours = 8.0,
+            hourlyHours = 6.5,
+            overtimeHours = 2.25,
+            baseWageTotal = 1_000_000L,
+            hourlyPayTotal = 650_000L,
+            overtimePayTotal = 337_500L,
+            netPayout = 1_987_500L
+        )
+        val att1 = com.karyar.app.data.local.entity.AttendanceEntity(
+            id = 1L,
+            workerId = 77L,
+            date = "1405/01/15",
+            epochDay = 20000L,
+            status = com.karyar.app.data.local.entity.AttendanceStatus.FULL_DAY,
+            regularHours = 8.0,
+            hourlyHours = 0.0,
+            overtimeHours = 1.5,
+            dailyWage = 1_000_000L
+        )
+        val att2 = com.karyar.app.data.local.entity.AttendanceEntity(
+            id = 2L,
+            workerId = 77L,
+            date = "1405/01/16",
+            epochDay = 20001L,
+            status = com.karyar.app.data.local.entity.AttendanceStatus.HOURLY,
+            regularHours = 0.0,
+            hourlyHours = 6.5,
+            overtimeHours = 0.75,
+            hourlyWage = 100_000L,
+            hourlyWageRate = 100_000L
+        )
+        val analytics = com.karyar.app.domain.model.DashboardAnalytics(
+            totalWorkersCount = 1,
+            activeWorkersCount = 1,
+            todayAttendanceCount = 1,
+            totalWorkDaysCount = 2,
+            totalPersonDays = 2,
+            totalWorkHours = 16.75,
+            totalOvertimeHours = 2.25,
+            totalWagesPaid = 1_000_000L,
+            totalOvertimePaid = 337_500L,
+            totalHourlyPaid = 650_000L,
+            grandTotalProjectCost = 1_987_500L
+        )
+
+        val csvFile = ExcelExportUtil.exportToExcelCsv(
+            context = testContext,
+            workers = listOf(worker),
+            attendanceList = listOf(att1, att2),
+            performances = listOf(perf),
+            projectName = "پروژه تست ساعت عددی",
+            expenses = emptyList(),
+            analytics = analytics
+        )
+
+        val rawText = csvFile.readText(Charsets.UTF_8).removePrefix("\uFEFF")
+        val rows = parseCsvRows(rawText)
+
+        // 1. Check Section 1 (Performance summary) hour columns: indices 6, 7, 8
+        val perfHeaderIdx = rows.indexOfFirst { it.contains("ساعات عادی (ساعت)") && it.contains("اضافه کاری (ساعت)") }
+        org.junit.Assert.assertTrue("Performance header row must exist", perfHeaderIdx >= 0)
+        val perfDataRow = rows[perfHeaderIdx + 1]
+        assertEquals(8.0, java.lang.Double.parseDouble(perfDataRow[6]), 0.001)
+        assertEquals(6.5, java.lang.Double.parseDouble(perfDataRow[7]), 0.001)
+        assertEquals(2.25, java.lang.Double.parseDouble(perfDataRow[8]), 0.001)
+
+        // 2. Check Section 2 (Attendance logs) hour columns: indices 7, 8, 9
+        val attHeaderIdx = rows.indexOfFirst { it.contains("ساعات عادی (ساعت)") && it.contains("ساعات اضافه کار (ساعت)") }
+        org.junit.Assert.assertTrue("Attendance header row must exist", attHeaderIdx >= 0)
+        val attRow1 = rows[attHeaderIdx + 1]
+        val attRow2 = rows[attHeaderIdx + 2]
+        assertEquals(8.0, java.lang.Double.parseDouble(attRow1[7]), 0.001)
+        assertEquals(0.0, java.lang.Double.parseDouble(attRow1[8]), 0.001)
+        assertEquals(1.5, java.lang.Double.parseDouble(attRow1[9]), 0.001)
+
+        assertEquals(0.0, java.lang.Double.parseDouble(attRow2[7]), 0.001)
+        assertEquals(6.5, java.lang.Double.parseDouble(attRow2[8]), 0.001)
+        assertEquals(0.75, java.lang.Double.parseDouble(attRow2[9]), 0.001)
+
+        // 3. Check Section 4 (Analytics totals) hour rows
+        val totalWorkHoursRow = rows.first { it.firstOrNull() == "مجموع ساعات کارکرد عادی (ساعت)" }
+        val totalOvertimeHoursRow = rows.first { it.firstOrNull() == "مجموع ساعات اضافه کاری (ساعت)" }
+        assertEquals(16.75, java.lang.Double.parseDouble(totalWorkHoursRow[1]), 0.001)
+        assertEquals(2.25, java.lang.Double.parseDouble(totalOvertimeHoursRow[1]), 0.001)
+
+        tempDir.deleteRecursively()
+    }
 }

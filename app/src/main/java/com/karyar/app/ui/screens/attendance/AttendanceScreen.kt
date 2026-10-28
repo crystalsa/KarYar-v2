@@ -194,7 +194,7 @@ fun AttendanceScreen(
 
                     // Date folder horizontal chips (از راست به چپ)
                     val sortedDateFolders = remember(dateFolders) {
-                        dateFolders.sortedWith(compareBy({ com.karyar.app.util.JalaliCalendar.toEpochDay(it.date) }, { it.id }))
+                        dateFolders.sortedWith(compareBy({ it.epochDay }, { it.id }))
                     }
 
                     if (sortedDateFolders.isEmpty()) {

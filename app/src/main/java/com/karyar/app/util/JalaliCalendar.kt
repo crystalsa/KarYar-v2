@@ -408,6 +408,45 @@ object JalaliCalendar {
     }
 
     /**
+     * Safe epochDay resolver that never throws on legacy invalid dates:
+     * returns [toEpochDayOrNull] if valid, otherwise [recalculateLegacyEpochDayFallback], or `0L`.
+     */
+    fun safeEpochDay(dateStr: String): Long {
+        return toEpochDayOrNull(dateStr) ?: recalculateLegacyEpochDayFallback(dateStr) ?: 0L
+    }
+
+    /**
+     * Repairs a legacy invalid Jalali date string (such as `1404/12/30` created by the old
+     * leap-year algorithm) into a valid canonical `YYYY/MM/DD` string.
+     *
+     * Rules:
+     * - Returns `null` if [dateStr] is already valid (`parseDateOrNull(dateStr) != null`) or unparseable.
+     * - If `month == 12 && day == 30 && !isLeapYear(year)`: moves to `(year + 1)/01/01` because
+     *   in the old calendar `12/30` of a non-leap year was reached by "Next Day" after `12/29`
+     *   and represented the Gregorian day corresponding to `01/01` of the next year.
+     * - For any other invalid month/day: clamps month to `1..12` and day to `1..getDaysInMonth(year, month)`.
+     */
+    fun fixLegacyInvalidDate(dateStr: String): String? {
+        if (parseDateOrNull(dateStr) != null) return null
+        val eng = toEnglishDigits(dateStr.trim())
+        val parts = eng.replace('-', '/').split('/')
+        if (parts.size != 3) return null
+        val jy = parts[0].trim().toIntOrNull() ?: return null
+        val rawMonth = parts[1].trim().toIntOrNull() ?: return null
+        val rawDay = parts[2].trim().toIntOrNull() ?: return null
+        if (jy !in 1..9998) return null
+
+        if (rawMonth == 12 && rawDay == 30 && !isLeapYear(jy)) {
+            return formatDate(jy + 1, 1, 1)
+        }
+
+        val safeMonth = rawMonth.coerceIn(1, 12)
+        val maxDays = getDaysInMonth(jy, safeMonth)
+        val safeDay = rawDay.coerceIn(1, maxDays)
+        return formatDate(jy, safeMonth, safeDay)
+    }
+
+    /**
      * Used only during database migration (e.g. 7->8) if a legacy row stored a date like `1404/12/30`
      * that was accepted under the old broken leap-year algorithm. Clamps to the valid month end so
      * its epochDay can still be recalculated without crashing migration.
@@ -455,12 +494,46 @@ object JalaliCalendar {
     }
 
     /**
+     * Safe variant of [nextDay] that returns `null` instead of throwing if [dateStr] is invalid.
+     */
+    fun nextDayOrNull(dateStr: String): Pair<String, String>? {
+        return addDaysOrNull(dateStr, 1)
+    }
+
+    /**
      * Moves to the previous day strictly following [PersianCalendar]:
      * 1 Mehr -> 31 Shahrivar
      * 1 Farvardin -> 29/30 Esfand of previous year
      */
     fun previousDay(dateStr: String): Pair<String, String> {
         return addDays(dateStr, -1)
+    }
+
+    /**
+     * Safe variant of [previousDay] that returns `null` instead of throwing if [dateStr] is invalid.
+     */
+    fun previousDayOrNull(dateStr: String): Pair<String, String>? {
+        return addDaysOrNull(dateStr, -1)
+    }
+
+    /**
+     * Safe variant of [addDays] that returns `null` instead of throwing if [dateStr] is invalid.
+     */
+    fun addDaysOrNull(dateStr: String, daysToAdd: Int): Pair<String, String>? {
+        val (y, m, d) = parseDateOrNull(dateStr) ?: return null
+        val cal = createPersianCalendar()
+        cal.clear()
+        cal.set(y, m - 1, d, 12, 0, 0)
+        if (daysToAdd != 0) {
+            cal.add(Calendar.DAY_OF_MONTH, daysToAdd)
+        }
+        val targetDateStr = formatDate(
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH) + 1,
+            cal.get(Calendar.DAY_OF_MONTH)
+        )
+        val targetDow = getDayOfWeekPersian(cal.get(Calendar.DAY_OF_WEEK))
+        return Pair(targetDateStr, targetDow)
     }
 
     /**

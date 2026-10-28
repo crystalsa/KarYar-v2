@@ -1603,6 +1603,64 @@ class WageCalculatorTest {
     fun `roundToLong throws ArithmeticException on values exceeding Long_MAX_VALUE`() {
         WageCalculator.roundToLong(1e20)
     }
+
+    @Test
+    fun `calculateFinancialSummary and calculateDailyBookkeeping skip record with Long_MAX_VALUE div 2 and return invalidAttendanceIds`() {
+        val worker1 = baseDailyWorker.copy(id = 1L, name = "کارگر سالم اول", baseDailyWage = 1_200_000L)
+        val worker2 = baseDailyWorker.copy(id = 2L, name = "کارگر سالم دوم", baseDailyWage = 800_000L)
+        val workers = listOf(worker1, worker2)
+
+        val healthyAtt1 = AttendanceEntity(
+            id = 101L,
+            workerId = 1L,
+            date = "1405/01/10",
+            status = AttendanceStatus.FULL_DAY,
+            dailyWage = 1_200_000L,
+            hasCustomAllowances = true
+        )
+        val corruptedAtt = AttendanceEntity(
+            id = 999L,
+            workerId = 1L,
+            date = "1405/01/10",
+            status = AttendanceStatus.FULL_DAY,
+            dailyWage = Long.MAX_VALUE / 2,
+            hasCustomAllowances = true
+        )
+        val healthyAtt2 = AttendanceEntity(
+            id = 102L,
+            workerId = 2L,
+            date = "1405/01/10",
+            status = AttendanceStatus.FULL_DAY,
+            dailyWage = 800_000L,
+            hasCustomAllowances = true
+        )
+
+        val attendances = listOf(healthyAtt1, corruptedAtt, healthyAtt2)
+
+        val summary = WageCalculator.calculateFinancialSummary(
+            workers = workers,
+            attendances = attendances,
+            expenses = emptyList(),
+            todayStr = "1405/01/10"
+        )
+
+        assertEquals(listOf(999L), summary.invalidAttendanceIds)
+        assertEquals(2_000_000L, summary.totalBaseWagesPaid)
+        assertEquals(2_000_000L, summary.grandTotalProjectCost)
+        assertEquals(2, summary.totalWorkDaysCount)
+
+        val daily = WageCalculator.calculateDailyBookkeeping(
+            dateStr = "1405/01/10",
+            workers = workers,
+            attendances = attendances,
+            expenses = emptyList()
+        )
+
+        assertEquals(listOf(999L), daily.invalidAttendanceIds)
+        assertEquals(2_000_000L, daily.totalDailyWages)
+        assertEquals(2_000_000L, daily.grandDailyCost)
+        assertEquals(2, daily.workersPresent)
+    }
 }
 
 

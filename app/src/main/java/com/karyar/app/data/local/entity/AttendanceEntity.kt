@@ -39,7 +39,7 @@ data class AttendanceEntity(
     val workerId: Long,
     val dateFolderId: Long = 0L,        // شناسه پوشه تاریخ
     val date: String,                   // تاریخ شمسی مثلا 1405/01/15
-    val epochDay: Long = JalaliCalendar.toEpochDay(date), // تاریخ به صورت epochDay
+    val epochDay: Long = JalaliCalendar.safeEpochDay(date), // تاریخ به صورت epochDay
     val status: AttendanceStatus = AttendanceStatus.FULL_DAY, // وضعیت حضور: FULL_DAY, HALF_DAY, HOURLY, ABSENT
     val timestamp: Long = System.currentTimeMillis(),
     val entryTime: String = "08:00",    // ساعت ورود

@@ -56,7 +56,7 @@ data class MigrationReport(
         AttendanceEntity::class,
         ExpenseEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -70,7 +70,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         private const val TAG = "AppDatabase"
         const val DB_NAME = "worker_management_db"
-        const val CURRENT_DB_VERSION = 8
+        const val CURRENT_DB_VERSION = 9
         const val BACKUP_DIR_NAME = "db_backups"
         const val MAX_BACKUPS = 3
         const val MIGRATION_PREFS_NAME = "migration_report"
@@ -930,6 +930,222 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Migration 8 -> 9:
+         * Repairs legacy invalid Jalali date strings (such as `1404/12/30` created by the old
+         * leap-year algorithm) across `date_folders`, `attendance`, and `expenses`:
+         * - Only modifies rows where `JalaliCalendar.parseDateOrNull(date) == null`.
+         * - Moves `12/30` of a non-leap year (e.g. `1404/12/30`) to `01/01` of the next year (`1405/01/01`),
+         *   and clamps any other invalid date to the last valid day of the same month.
+         * - Handles collisions in `date_folders` (`folderId + date`) and `attendance` (`UNIQUE(workerId, date)`):
+         *   keeps/merges into the existing target date row, backs up the colliding legacy row to `db_backups`
+         *   in JSON format, and records it in [MigrationReport].
+         * - Updates `epochDay` and `dayOfWeek` for all modified rows.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val deletedDuplicateRows = mutableListOf<JSONObject>()
+
+                // 1. Fix invalid dates in `date_folders`
+                data class InvalidDateFolderRow(
+                    val id: Long,
+                    val folderId: Long,
+                    val oldDate: String,
+                    val title: String,
+                    val notes: String
+                )
+
+                val invalidDateFolders = mutableListOf<InvalidDateFolderRow>()
+                db.query("SELECT `id`, `folderId`, `date`, `title`, `notes` FROM `date_folders` ORDER BY `id` ASC").use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(0)
+                        val folderId = cursor.getLong(1)
+                        val dateStr = cursor.getString(2) ?: ""
+                        val title = cursor.getString(3) ?: ""
+                        val notes = cursor.getString(4) ?: ""
+                        if (JalaliCalendar.parseDateOrNull(dateStr) == null) {
+                            invalidDateFolders.add(InvalidDateFolderRow(id, folderId, dateStr, title, notes))
+                        }
+                    }
+                }
+
+                for (row in invalidDateFolders) {
+                    val newDate = JalaliCalendar.fixLegacyInvalidDate(row.oldDate) ?: continue
+                    val newEpochDay = JalaliCalendar.toEpochDayOrNull(newDate) ?: continue
+                    val newDayOfWeek = JalaliCalendar.getDayOfWeek(newDate)
+
+                    var existingTargetDfId: Long? = null
+                    var existingTargetTitle = ""
+                    var existingTargetNotes = ""
+                    db.query(
+                        "SELECT `id`, `title`, `notes` FROM `date_folders` WHERE `folderId` = ? AND `date` = ? AND `id` != ? ORDER BY `id` ASC LIMIT 1",
+                        arrayOf<Any>(row.folderId, newDate, row.id)
+                    ).use { targetCursor ->
+                        if (targetCursor.moveToFirst()) {
+                            existingTargetDfId = targetCursor.getLong(0)
+                            existingTargetTitle = targetCursor.getString(1) ?: ""
+                            existingTargetNotes = targetCursor.getString(2) ?: ""
+                        }
+                    }
+
+                    val targetDfId = existingTargetDfId
+                    if (targetDfId != null) {
+                        val mergedTitle = existingTargetTitle.ifBlank { row.title }
+                        val mergedNotes = existingTargetNotes.ifBlank { row.notes }
+                        db.execSQL(
+                            "UPDATE `date_folders` SET `dayOfWeek` = ?, `title` = ?, `notes` = ?, `epochDay` = ? WHERE `id` = ?",
+                            arrayOf<Any>(newDayOfWeek, mergedTitle, mergedNotes, newEpochDay, targetDfId)
+                        )
+                        db.execSQL(
+                            "UPDATE `attendance` SET `dateFolderId` = ? WHERE `dateFolderId` = ?",
+                            arrayOf<Any>(targetDfId, row.id)
+                        )
+                        val backedUp = queryRowsForBackup(
+                            db = db,
+                            sql = "SELECT * FROM `date_folders` WHERE `id` = ?",
+                            args = arrayOf(row.id),
+                            reason = "DUPLICATE_DATE_FOLDER_ON_INVALID_DATE_FIX",
+                            table = "date_folders"
+                        )
+                        backedUp.forEach { obj ->
+                            obj.put("oldInvalidDate", row.oldDate)
+                            obj.put("resolvedDate", newDate)
+                            obj.put("mergedIntoDateFolderId", targetDfId)
+                        }
+                        deletedDuplicateRows.addAll(backedUp)
+                        db.execSQL("DELETE FROM `date_folders` WHERE `id` = ?", arrayOf<Any>(row.id))
+                    } else {
+                        db.execSQL(
+                            "UPDATE `date_folders` SET `date` = ?, `dayOfWeek` = ?, `epochDay` = ? WHERE `id` = ?",
+                            arrayOf<Any>(newDate, newDayOfWeek, newEpochDay, row.id)
+                        )
+                    }
+                }
+
+                // 2. Fix invalid dates in `attendance`
+                data class InvalidAttendanceRow(
+                    val id: Long,
+                    val folderId: Long,
+                    val workerId: Long,
+                    val dateFolderId: Long,
+                    val oldDate: String
+                )
+
+                val invalidAttendances = mutableListOf<InvalidAttendanceRow>()
+                db.query("SELECT `id`, `folderId`, `workerId`, `dateFolderId`, `date` FROM `attendance` ORDER BY `id` ASC").use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(0)
+                        val folderId = cursor.getLong(1)
+                        val workerId = cursor.getLong(2)
+                        val dateFolderId = cursor.getLong(3)
+                        val dateStr = cursor.getString(4) ?: ""
+                        if (JalaliCalendar.parseDateOrNull(dateStr) == null) {
+                            invalidAttendances.add(InvalidAttendanceRow(id, folderId, workerId, dateFolderId, dateStr))
+                        }
+                    }
+                }
+
+                for (row in invalidAttendances) {
+                    val newDate = JalaliCalendar.fixLegacyInvalidDate(row.oldDate) ?: continue
+                    val newEpochDay = JalaliCalendar.toEpochDayOrNull(newDate) ?: continue
+
+                    var resolvedDateFolderId = row.dateFolderId
+                    db.query(
+                        "SELECT `id` FROM `date_folders` WHERE `folderId` = ? AND `date` = ? ORDER BY `id` ASC LIMIT 1",
+                        arrayOf<Any>(row.folderId, newDate)
+                    ).use { dfCursor ->
+                        if (dfCursor.moveToFirst()) {
+                            resolvedDateFolderId = dfCursor.getLong(0)
+                        }
+                    }
+
+                    var existingTargetAttId: Long? = null
+                    db.query(
+                        "SELECT `id` FROM `attendance` WHERE `workerId` = ? AND `date` = ? AND `id` != ? ORDER BY `id` ASC LIMIT 1",
+                        arrayOf<Any>(row.workerId, newDate, row.id)
+                    ).use { targetCursor ->
+                        if (targetCursor.moveToFirst()) {
+                            existingTargetAttId = targetCursor.getLong(0)
+                        }
+                    }
+
+                    val targetAttId = existingTargetAttId
+                    if (targetAttId != null) {
+                        if (resolvedDateFolderId > 0L) {
+                            db.execSQL(
+                                "UPDATE `attendance` SET `epochDay` = ?, `dateFolderId` = CASE WHEN `dateFolderId` = 0 THEN ? ELSE `dateFolderId` END WHERE `id` = ?",
+                                arrayOf<Any>(newEpochDay, resolvedDateFolderId, targetAttId)
+                            )
+                        } else {
+                            db.execSQL(
+                                "UPDATE `attendance` SET `epochDay` = ? WHERE `id` = ?",
+                                arrayOf<Any>(newEpochDay, targetAttId)
+                            )
+                        }
+                        val backedUp = queryRowsForBackup(
+                            db = db,
+                            sql = "SELECT * FROM `attendance` WHERE `id` = ?",
+                            args = arrayOf(row.id),
+                            reason = "DUPLICATE_ATTENDANCE_ON_INVALID_DATE_FIX",
+                            table = "attendance"
+                        )
+                        backedUp.forEach { obj ->
+                            obj.put("oldInvalidDate", row.oldDate)
+                            obj.put("resolvedDate", newDate)
+                            obj.put("mergedIntoAttendanceId", targetAttId)
+                        }
+                        deletedDuplicateRows.addAll(backedUp)
+                        db.execSQL("DELETE FROM `attendance` WHERE `id` = ?", arrayOf<Any>(row.id))
+                    } else {
+                        db.execSQL(
+                            "UPDATE `attendance` SET `date` = ?, `epochDay` = ?, `dateFolderId` = ? WHERE `id` = ?",
+                            arrayOf<Any>(newDate, newEpochDay, resolvedDateFolderId, row.id)
+                        )
+                    }
+                }
+
+                // 3. Fix invalid dates in `expenses`
+                val invalidExpenses = mutableListOf<Pair<Long, String>>()
+                db.query("SELECT `id`, `date` FROM `expenses` ORDER BY `id` ASC").use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(0)
+                        val dateStr = cursor.getString(1) ?: ""
+                        if (JalaliCalendar.parseDateOrNull(dateStr) == null) {
+                            invalidExpenses.add(id to dateStr)
+                        }
+                    }
+                }
+
+                for ((id, oldDate) in invalidExpenses) {
+                    val newDate = JalaliCalendar.fixLegacyInvalidDate(oldDate) ?: continue
+                    val newEpochDay = JalaliCalendar.toEpochDayOrNull(newDate) ?: continue
+                    db.execSQL(
+                        "UPDATE `expenses` SET `date` = ?, `epochDay` = ? WHERE `id` = ?",
+                        arrayOf<Any>(newDate, newEpochDay, id)
+                    )
+                }
+
+                if (deletedDuplicateRows.isNotEmpty()) {
+                    val backupFile = writeDeletedRowsBackupFile(
+                        existingFile = null,
+                        duplicateRows = deletedDuplicateRows,
+                        orphanRows = emptyList(),
+                        orphanBreakdown = emptyMap()
+                    )
+                    val previousReport = _migrationReportFlow.value
+                    val totalDuplicates = (previousReport?.deletedDuplicatesCount ?: 0) + deletedDuplicateRows.size
+                    val totalOrphans = previousReport?.deletedOrphansCount ?: 0
+                    val breakdown = previousReport?.orphanBreakdown ?: ""
+                    saveMigrationReport(
+                        deletedDuplicatesCount = totalDuplicates,
+                        deletedOrphansCount = totalOrphans,
+                        orphanBreakdown = breakdown,
+                        backupFilePath = backupFile?.absolutePath ?: previousReport?.backupFilePath
+                    )
+                }
+            }
+        }
+
         internal fun backupDatabaseBeforeMigrationIfNeeded(context: Context) {
             try {
                 val dbFile = context.getDatabasePath(DB_NAME)
@@ -1002,7 +1218,8 @@ abstract class AppDatabase : RoomDatabase() {
                             MIGRATION_4_5,
                             MIGRATION_5_6,
                             MIGRATION_6_7,
-                            MIGRATION_7_8
+                            MIGRATION_7_8,
+                            MIGRATION_8_9
                         )
                         .addCallback(object : RoomDatabase.Callback() {
                             override fun onOpen(db: SupportSQLiteDatabase) {

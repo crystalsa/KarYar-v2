@@ -3,16 +3,21 @@ package com.karyar.app
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.karyar.app.data.local.AppDatabase
+import com.karyar.app.data.local.entity.AttendanceEntity
+import com.karyar.app.data.local.entity.AttendanceStatus
 import com.karyar.app.data.local.entity.DateFolderEntity
 import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
 import com.karyar.app.ui.WorkerViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -169,4 +174,107 @@ class ViewModelInitPreservesDataTest {
         assertNull(vmEmpty.currentFolder.value)
         assertNull(vmEmpty.selectedDateFolder.value)
     }
+
+    @Test
+    fun testViewModelFlowsHandleOverflowRecordWithoutCrash() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val db = AppDatabase.getDatabase(app)
+
+        db.attendanceDao().clearAll()
+        db.expenseDao().clearAll()
+        db.workerDao().clearAll()
+        db.dateFolderDao().clearAll()
+        db.folderDao().clearAll()
+
+        val folderEntity = WorkplaceFolderEntity(
+            name = "پروژه تست سرریز",
+            foremanName = "سرکارگر",
+            employerName = "کارفرما"
+        )
+        val folderId = db.folderDao().insertFolder(folderEntity)
+        val workerId = db.workerDao().insertWorker(
+            WorkerEntity(
+                folderId = folderId,
+                name = "کارگر تست",
+                role = "استادکار",
+                baseDailyWage = 1_000_000L,
+                isActive = true
+            )
+        )
+        val dateFolder = DateFolderEntity(
+            folderId = folderId,
+            date = "1404/01/10",
+            dayOfWeek = "یکشنبه",
+            title = "روز دهم"
+        )
+        val dateFolderId = db.dateFolderDao().insertDateFolder(dateFolder)
+
+        // ۱. رکورد سالم
+        db.attendanceDao().insertAttendance(
+            AttendanceEntity(
+                folderId = folderId,
+                workerId = workerId,
+                dateFolderId = dateFolderId,
+                date = "1404/01/10",
+                status = AttendanceStatus.FULL_DAY,
+                regularHours = 8.0,
+                dailyWage = 1_000_000L,
+                hasCustomAllowances = true
+            )
+        )
+        // ۲. رکورد سرریز شونده (dailyWage = Long.MAX_VALUE / 2 با کسورات و اضافه کاری که سرریز می‌کند)
+        val badId = db.attendanceDao().insertAttendance(
+            AttendanceEntity(
+                folderId = folderId,
+                workerId = workerId,
+                dateFolderId = dateFolderId,
+                date = "1404/01/11",
+                status = AttendanceStatus.FULL_DAY,
+                regularHours = 8.0,
+                dailyWage = Long.MAX_VALUE / 2,
+                overtimeHours = 10.0,
+                overtimeRate = Long.MAX_VALUE / 2,
+                hasCustomAllowances = true
+            )
+        )
+
+        val savedFolder = folderEntity.copy(id = folderId)
+        val viewModel = WorkerViewModel(
+            application = app,
+            foldersFlow = flowOf(listOf(savedFolder))
+        )
+        viewModel.selectFolder(savedFolder)
+        viewModel.selectDailyDate("1404/01/11")
+
+        // مشترک شدن روی StateFlowهای WhileSubscribed تا محاسبات فعال شوند
+        val collectJob = launch(kotlinx.coroutines.Dispatchers.Default) {
+            launch { viewModel.financialSummary.collect {} }
+            launch { viewModel.dailyBookkeeping.collect {} }
+            launch { viewModel.workerPerformances.collect {} }
+            launch { viewModel.analytics.collect {} }
+            launch { viewModel.problematicRecords.collect {} }
+        }
+
+        // پیش بردن Main Looper در Robolectric تا نتایج از Dispatchers.IO و Dispatchers.Default به viewModelScope برسند
+        val mainLooper = org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper())
+        repeat(30) {
+            mainLooper.idle()
+            if (viewModel.financialSummary.value.invalidAttendanceIds.isNotEmpty() &&
+                viewModel.problematicRecords.value.isNotEmpty()
+            ) {
+                return@repeat
+            }
+            delay(50)
+        }
+        mainLooper.idle()
+
+        val summary = viewModel.financialSummary.value
+        assertEquals(1_000_000L, summary.grandTotalProjectCost)
+        assertTrue(summary.invalidAttendanceIds.contains(badId))
+        assertNotNull(viewModel.calculationError.value)
+        assertTrue(viewModel.problematicRecords.value.any { it.attendanceId == badId })
+
+        collectJob.cancel()
+    }
 }
+

@@ -31,5 +31,5 @@ data class DateFolderEntity(
     val title: String = "",         // عنوان اختیاری مثلا: بتن‌ریزی سقف اول
     val notes: String = "",         // توضیحات روز
     val createdAt: Long = System.currentTimeMillis(),
-    val epochDay: Long = JalaliCalendar.toEpochDay(date) // تاریخ به صورت epochDay برای فیلتر و مرتب‌سازی دقیق
+    val epochDay: Long = JalaliCalendar.safeEpochDay(date) // تاریخ به صورت epochDay برای فیلتر و مرتب‌سازی دقیق
 )

@@ -69,12 +69,12 @@ class WorkerRepository(
     suspend fun getFolderById(folderId: Long): WorkplaceFolderEntity? = folderDao.getFolderById(folderId)
 
     suspend fun insertDateFolder(dateFolder: DateFolderEntity): Long = dateFolderDao.insertDateFolder(
-        dateFolder.copy(epochDay = JalaliCalendar.toEpochDay(dateFolder.date))
+        dateFolder.copy(epochDay = JalaliCalendar.safeEpochDay(dateFolder.date))
     )
 
     suspend fun updateDateFolder(dateFolder: DateFolderEntity) = database.withTransaction {
         val oldDateFolder = dateFolderDao.getDateFolderById(dateFolder.id)
-        val newEpochDay = JalaliCalendar.toEpochDay(dateFolder.date)
+        val newEpochDay = JalaliCalendar.safeEpochDay(dateFolder.date)
         val updatedFolder = dateFolder.copy(epochDay = newEpochDay)
         if (oldDateFolder != null && oldDateFolder.date != dateFolder.date) {
             val directConflicts = attendanceDao.getConflictingAttendancesForDateMove(
@@ -128,7 +128,7 @@ class WorkerRepository(
 
     suspend fun mergeDateFolder(dateFolder: DateFolderEntity): DateFolderEntity = database.withTransaction {
         val oldDateFolder = dateFolderDao.getDateFolderById(dateFolder.id)
-        val newEpochDay = JalaliCalendar.toEpochDay(dateFolder.date)
+        val newEpochDay = JalaliCalendar.safeEpochDay(dateFolder.date)
         val existingTargetFolder = dateFolderDao.getDateFolderByDate(dateFolder.folderId, dateFolder.date)
         val survivingFolder = if (existingTargetFolder != null && existingTargetFolder.id != dateFolder.id) {
             existingTargetFolder.copy(
@@ -328,7 +328,7 @@ class WorkerRepository(
                     dayOfWeek = dayOfWeek,
                     title = title,
                     notes = notes,
-                    epochDay = JalaliCalendar.toEpochDay(date)
+                    epochDay = JalaliCalendar.safeEpochDay(date)
                 )
             )
         }
