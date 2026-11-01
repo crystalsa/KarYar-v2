@@ -1201,10 +1201,23 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             val appCtx = context.applicationContext ?: context
-            appContext = appCtx
             getPendingMigrationReport(appCtx)
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: run {
+            val existing = INSTANCE
+            if (existing != null && appContext === appCtx && existing.isOpen) {
+                return existing
+            }
+            return synchronized(this) {
+                val current = INSTANCE
+                if (current != null && appContext === appCtx && current.isOpen) {
+                    current
+                } else {
+                    if (current != null) {
+                        try {
+                            current.close()
+                        } catch (_: Throwable) {}
+                        INSTANCE = null
+                    }
+                    appContext = appCtx
                     backupDatabaseBeforeMigrationIfNeeded(appCtx)
                     val instance = Room.databaseBuilder(
                         appCtx,

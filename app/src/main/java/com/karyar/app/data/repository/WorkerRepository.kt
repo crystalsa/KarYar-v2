@@ -409,7 +409,7 @@ class WorkerRepository(
     suspend fun insertExpense(expense: ExpenseEntity): Long = expenseDao.insertExpense(expense)
     suspend fun deleteExpense(expense: ExpenseEntity) = expenseDao.deleteExpense(expense)
 
-    suspend fun clearAllData() = database.withTransaction {
+    suspend fun clearAllData() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         attendanceDao.clearAll()
         expenseDao.clearAll()
         workerDao.clearAll()
@@ -417,7 +417,7 @@ class WorkerRepository(
         folderDao.clearAll()
     }
 
-    suspend fun exportFullBackupPayload(): FullBackupPayload = database.withTransaction {
+    suspend fun exportFullBackupPayload(): FullBackupPayload = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         FullBackupPayload(
             folders = folderDao.getAllFoldersSync(),
             dateFolders = dateFolderDao.getAllDateFoldersSync(),
@@ -427,7 +427,7 @@ class WorkerRepository(
         )
     }
 
-    suspend fun restoreFullBackupPayload(payload: FullBackupPayload): Long? = database.withTransaction {
+    suspend fun restoreFullBackupPayload(payload: FullBackupPayload): Long? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         attendanceDao.clearAll()
         expenseDao.clearAll()
         workerDao.clearAll()

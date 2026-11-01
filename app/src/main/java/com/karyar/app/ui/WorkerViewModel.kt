@@ -444,6 +444,11 @@ class WorkerViewModel(
             job.cancel()
         }
         initialCollectorJobs.clear()
+        viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.let { parentJob ->
+            for (child in parentJob.children.toList()) {
+                child.cancel()
+            }
+        }
         timeChangeReceiver?.let { receiver ->
             try {
                 getApplication<Application>().unregisterReceiver(receiver)

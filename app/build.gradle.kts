@@ -69,6 +69,11 @@ android {
       isIncludeAndroidResources = true
       all {
         it.maxHeapSize = "2g"
+        it.testLogging {
+          events("started", "passed", "skipped", "failed")
+          showStandardStreams = true
+          exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        }
       }
     }
   }
