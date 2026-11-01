@@ -15,6 +15,7 @@ import com.karyar.app.data.local.entity.WorkerEntity
 import com.karyar.app.data.local.entity.WorkplaceFolderEntity
 import com.karyar.app.domain.model.DeletionImpact
 import com.karyar.app.util.Formatters
+import com.karyar.app.util.FullBackupPayload
 import com.karyar.app.util.JalaliCalendar
 import com.karyar.app.util.WageCalculator
 import kotlinx.coroutines.flow.Flow
@@ -409,11 +410,121 @@ class WorkerRepository(
     suspend fun deleteExpense(expense: ExpenseEntity) = expenseDao.deleteExpense(expense)
 
     suspend fun clearAllData() = database.withTransaction {
-        folderDao.clearAll()
-        dateFolderDao.clearAll()
-        workerDao.clearAll()
         attendanceDao.clearAll()
         expenseDao.clearAll()
+        workerDao.clearAll()
+        dateFolderDao.clearAll()
+        folderDao.clearAll()
+    }
+
+    suspend fun exportFullBackupPayload(): FullBackupPayload = database.withTransaction {
+        FullBackupPayload(
+            folders = folderDao.getAllFoldersSync(),
+            dateFolders = dateFolderDao.getAllDateFoldersSync(),
+            workers = workerDao.getAllWorkersSync(),
+            attendances = attendanceDao.getAllAttendanceSync(),
+            expenses = expenseDao.getAllExpensesSync()
+        )
+    }
+
+    suspend fun restoreFullBackupPayload(payload: FullBackupPayload): Long? = database.withTransaction {
+        attendanceDao.clearAll()
+        expenseDao.clearAll()
+        workerDao.clearAll()
+        dateFolderDao.clearAll()
+        folderDao.clearAll()
+
+        val folderIdMap = mutableMapOf<Long, Long>()
+        var firstRestoredFolderId: Long? = null
+
+        for (folder in payload.folders) {
+            val insertedId = folderDao.insertFolder(folder)
+            val actualId = if (insertedId > 0L) insertedId else folder.id
+            if (folder.id > 0L) {
+                folderIdMap[folder.id] = actualId
+            }
+            folderIdMap[actualId] = actualId
+            if (firstRestoredFolderId == null && actualId > 0L) {
+                firstRestoredFolderId = actualId
+            }
+        }
+
+        val validFolderIds = folderIdMap.values.toHashSet()
+        val dateFolderIdMap = mutableMapOf<Long, Long>()
+        val dateFolderByFolderAndDate = mutableMapOf<Pair<Long, String>, Long>()
+
+        for (df in payload.dateFolders) {
+            val mappedFolderId = folderIdMap[df.folderId] ?: df.folderId
+            if (mappedFolderId !in validFolderIds) continue
+            val normalizedDate = JalaliCalendar.fixLegacyInvalidDate(df.date) ?: df.date
+            val epochDay = JalaliCalendar.safeEpochDay(normalizedDate)
+            val entityToInsert = df.copy(
+                folderId = mappedFolderId,
+                date = normalizedDate,
+                epochDay = epochDay
+            )
+            val insertedId = dateFolderDao.insertDateFolder(entityToInsert)
+            val actualId = if (insertedId > 0L) insertedId else df.id
+            if (df.id > 0L) {
+                dateFolderIdMap[df.id] = actualId
+            }
+            dateFolderIdMap[actualId] = actualId
+            dateFolderByFolderAndDate[mappedFolderId to normalizedDate] = actualId
+        }
+
+        val workerIdMap = mutableMapOf<Long, Long>()
+        for (w in payload.workers) {
+            val mappedFolderId = folderIdMap[w.folderId] ?: w.folderId
+            if (mappedFolderId !in validFolderIds) continue
+            val insertedId = workerDao.insertWorker(w.copy(folderId = mappedFolderId))
+            val actualId = if (insertedId > 0L) insertedId else w.id
+            if (w.id > 0L) {
+                workerIdMap[w.id] = actualId
+            }
+            workerIdMap[actualId] = actualId
+        }
+
+        val validWorkerIds = workerIdMap.values.toHashSet()
+        for (att in payload.attendances) {
+            val mappedFolderId = folderIdMap[att.folderId] ?: att.folderId
+            val mappedWorkerId = workerIdMap[att.workerId] ?: att.workerId
+            if (mappedFolderId !in validFolderIds || mappedWorkerId !in validWorkerIds) continue
+            val normalizedDate = JalaliCalendar.fixLegacyInvalidDate(att.date) ?: att.date
+            val epochDay = JalaliCalendar.safeEpochDay(normalizedDate)
+            val mappedDfId = dateFolderIdMap[att.dateFolderId]
+                ?: dateFolderByFolderAndDate[mappedFolderId to normalizedDate]
+                ?: 0L
+            attendanceDao.insertAttendanceReplace(
+                att.copy(
+                    folderId = mappedFolderId,
+                    workerId = mappedWorkerId,
+                    dateFolderId = mappedDfId,
+                    date = normalizedDate,
+                    epochDay = epochDay
+                )
+            )
+        }
+
+        for (exp in payload.expenses) {
+            val mappedFolderId = folderIdMap[exp.folderId] ?: exp.folderId
+            if (mappedFolderId !in validFolderIds) continue
+            val mappedWorkerId = exp.workerId?.let { wId ->
+                val resolved = workerIdMap[wId] ?: wId
+                if (resolved in validWorkerIds) resolved else null
+            }
+            val normalizedDate = JalaliCalendar.fixLegacyInvalidDate(exp.date) ?: exp.date
+            val epochDay = JalaliCalendar.safeEpochDay(normalizedDate)
+            expenseDao.insertExpense(
+                exp.copy(
+                    folderId = mappedFolderId,
+                    workerId = mappedWorkerId,
+                    date = normalizedDate,
+                    epochDay = epochDay
+                )
+            )
+        }
+
+        firstRestoredFolderId
     }
 
     /**

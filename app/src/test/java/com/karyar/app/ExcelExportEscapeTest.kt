@@ -354,33 +354,213 @@ class ExcelExportEscapeTest {
         val rawText = csvFile.readText(Charsets.UTF_8).removePrefix("\uFEFF")
         val rows = parseCsvRows(rawText)
 
-        // 1. Check Section 1 (Performance summary) hour columns: indices 6, 7, 8
-        val perfHeaderIdx = rows.indexOfFirst { it.contains("ساعات عادی (ساعت)") && it.contains("اضافه کاری (ساعت)") }
-        org.junit.Assert.assertTrue("Performance header row must exist", perfHeaderIdx >= 0)
-        val perfDataRow = rows[perfHeaderIdx + 1]
-        assertEquals(8.0, java.lang.Double.parseDouble(perfDataRow[6]), 0.001)
-        assertEquals(6.5, java.lang.Double.parseDouble(perfDataRow[7]), 0.001)
-        assertEquals(2.25, java.lang.Double.parseDouble(perfDataRow[8]), 0.001)
+        // Row 1 (index 0) is the horizontal header row; Row 2 (index 1) is the worker's row
+        val headerRow = rows[0]
+        val perfDataRow = rows[1]
 
-        // 2. Check Section 2 (Attendance logs) hour columns: indices 7, 8, 9
-        val attHeaderIdx = rows.indexOfFirst { it.contains("ساعات عادی (ساعت)") && it.contains("ساعات اضافه کار (ساعت)") }
-        org.junit.Assert.assertTrue("Attendance header row must exist", attHeaderIdx >= 0)
-        val attRow1 = rows[attHeaderIdx + 1]
-        val attRow2 = rows[attHeaderIdx + 2]
-        assertEquals(8.0, java.lang.Double.parseDouble(attRow1[7]), 0.001)
-        assertEquals(0.0, java.lang.Double.parseDouble(attRow1[8]), 0.001)
-        assertEquals(1.5, java.lang.Double.parseDouble(attRow1[9]), 0.001)
+        val regularHoursIdx = headerRow.indexOf("ساعات عادی (ساعت)")
+        val hourlyHoursIdx = headerRow.indexOf("ساعت کار ساعتی (ساعت)")
+        val overtimeHoursIdx = headerRow.indexOf("اضافه کاری (ساعت)")
 
-        assertEquals(0.0, java.lang.Double.parseDouble(attRow2[7]), 0.001)
-        assertEquals(6.5, java.lang.Double.parseDouble(attRow2[8]), 0.001)
-        assertEquals(0.75, java.lang.Double.parseDouble(attRow2[9]), 0.001)
+        org.junit.Assert.assertTrue("Regular hours column must exist in Row 1", regularHoursIdx >= 0)
+        org.junit.Assert.assertTrue("Hourly hours column must exist in Row 1", hourlyHoursIdx >= 0)
+        org.junit.Assert.assertTrue("Overtime hours column must exist in Row 1", overtimeHoursIdx >= 0)
 
-        // 3. Check Section 4 (Analytics totals) hour rows
-        val totalWorkHoursRow = rows.first { it.firstOrNull() == "مجموع ساعات کارکرد عادی (ساعت)" }
-        val totalOvertimeHoursRow = rows.first { it.firstOrNull() == "مجموع ساعات اضافه کاری (ساعت)" }
-        assertEquals(16.75, java.lang.Double.parseDouble(totalWorkHoursRow[1]), 0.001)
-        assertEquals(2.25, java.lang.Double.parseDouble(totalOvertimeHoursRow[1]), 0.001)
+        assertEquals(8.0, java.lang.Double.parseDouble(perfDataRow[regularHoursIdx]), 0.001)
+        assertEquals(6.5, java.lang.Double.parseDouble(perfDataRow[hourlyHoursIdx]), 0.001)
+        assertEquals(2.25, java.lang.Double.parseDouble(perfDataRow[overtimeHoursIdx]), 0.001)
+
+        tempDir.deleteRecursively()
+    }
+
+    @Test
+    fun testHorizontalRtlExcelXlsxAndCsvWorkerPerRowVariablesInColumns() {
+        val tempDir = java.nio.file.Files.createTempDirectory("karyar_xlsx_rtl_test").toFile()
+        val testContext = object : android.content.ContextWrapper(null) {
+            override fun getCacheDir(): java.io.File = tempDir
+        }
+
+        val worker1 = com.karyar.app.data.local.entity.WorkerEntity(
+            id = 1L,
+            folderId = 1L,
+            name = "علی رضایی",
+            role = "بنا",
+            phone = "09121112233",
+            nationalId = "0012345678",
+            baseDailyWage = 1_200_000L,
+            baseHourlyWage = 150_000L,
+            overtimeRate = 200_000L,
+            notes = "استادکار دیوارچینی"
+        )
+        val worker2 = com.karyar.app.data.local.entity.WorkerEntity(
+            id = 2L,
+            folderId = 1L,
+            name = "حسن محمدی",
+            role = "کارگر ساده",
+            phone = "09351112233",
+            nationalId = "0087654321",
+            baseDailyWage = 800_000L,
+            overtimeRate = 120_000L
+        )
+        val perf1 = com.karyar.app.domain.model.WorkerPerformance(
+            worker = worker1,
+            totalShifts = 5,
+            fullDaysCount = 4,
+            halfDaysCount = 1,
+            hourlyDaysCount = 0,
+            absentDaysCount = 1,
+            regularHours = 36.0,
+            hourlyHours = 0.0,
+            overtimeHours = 3.5,
+            baseWageTotal = 5_400_000L,
+            hourlyPayTotal = 0L,
+            overtimePayTotal = 700_000L,
+            totalAllowances = 300_000L,
+            transitAllowanceTotal = 200_000L,
+            foodAllowanceTotal = 100_000L,
+            netPayout = 6_400_000L
+        )
+        val perf2 = com.karyar.app.domain.model.WorkerPerformance(
+            worker = worker2,
+            totalShifts = 3,
+            fullDaysCount = 3,
+            regularHours = 24.0,
+            overtimeHours = 1.0,
+            baseWageTotal = 2_400_000L,
+            overtimePayTotal = 120_000L,
+            netPayout = 2_520_000L
+        )
+
+        // 1. Check CSV structure: Row 1 = headers, Row 2 = worker1, Row 3 = worker2
+        val csvFile = ExcelExportUtil.exportToExcelCsv(
+            context = testContext,
+            workers = listOf(worker1, worker2),
+            attendanceList = emptyList(),
+            performances = listOf(perf1, perf2),
+            projectName = "پروژه افقی"
+        )
+        val rows = parseCsvRows(csvFile.readText(Charsets.UTF_8).removePrefix("\uFEFF"))
+        assertEquals("Should have exactly 1 header row + 2 worker rows", 3, rows.size)
+        assertEquals(ExcelExportUtil.WORKER_EXPORT_HEADERS, rows[0])
+        assertEquals("علی رضایی", rows[1][0])
+        assertEquals("بنا", rows[1][1])
+        assertEquals("5", rows[1][2]) // C2: تعداد روزهای کار
+        assertEquals("3.5", rows[1][10]) // K2: اضافه کاری (ساعت)
+        assertEquals("حسن محمدی", rows[2][0])
+        assertEquals("3", rows[2][2]) // C3: تعداد روزهای کار
+
+        // 2. Check XLSX structure: valid ZIP, rightToLeft="1", A1..AK1 headers, A2/C2/K2 values
+        val xlsxFile = ExcelExportUtil.exportToExcelXlsx(
+            context = testContext,
+            workers = listOf(worker1, worker2),
+            attendanceList = emptyList(),
+            performances = listOf(perf1, perf2),
+            projectName = "پروژه افقی"
+        )
+        org.junit.Assert.assertTrue(xlsxFile.exists())
+        java.util.zip.ZipFile(xlsxFile).use { zip ->
+            val sheetEntry = zip.getEntry("xl/worksheets/sheet1.xml")
+            org.junit.Assert.assertNotNull("sheet1.xml must exist in .xlsx", sheetEntry)
+            val sheetXml = zip.getInputStream(sheetEntry!!).bufferedReader(Charsets.UTF_8).readText()
+            org.junit.Assert.assertTrue(
+                "Sheet must be Right-to-Left (rightToLeft=\"1\")",
+                sheetXml.contains("rightToLeft=\"1\"")
+            )
+            org.junit.Assert.assertTrue(
+                "A1 must be نام کارگر header",
+                sheetXml.contains("<c r=\"A1\" s=\"1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">نام کارگر</t></is></c>")
+            )
+            org.junit.Assert.assertTrue(
+                "C1 must be تعداد روزهای کار header",
+                sheetXml.contains("<c r=\"C1\" s=\"1\" t=\"inlineStr\"><is><t xml:space=\"preserve\">تعداد روزهای کار</t></is></c>")
+            )
+            org.junit.Assert.assertTrue(
+                "A2 must be first worker name",
+                sheetXml.contains("<c r=\"A2\" s=\"2\" t=\"inlineStr\"><is><t xml:space=\"preserve\">علی رضایی</t></is></c>")
+            )
+            org.junit.Assert.assertTrue(
+                "C2 must be first worker total work days (5)",
+                sheetXml.contains("<c r=\"C2\" s=\"3\" t=\"n\"><v>5</v></c>")
+            )
+            org.junit.Assert.assertTrue(
+                "K2 must be first worker overtime hours (3.5)",
+                sheetXml.contains("<c r=\"K2\" s=\"3\" t=\"n\"><v>3.5</v></c>")
+            )
+            org.junit.Assert.assertTrue(
+                "A3 must be second worker name",
+                sheetXml.contains("<c r=\"A3\" s=\"2\" t=\"inlineStr\"><is><t xml:space=\"preserve\">حسن محمدی</t></is></c>")
+            )
+        }
+
+        tempDir.deleteRecursively()
+    }
+
+    @Test
+    fun testSaveExcelAndPdfToInternalStorage() {
+        val tempDir = java.nio.file.Files.createTempDirectory("karyar_internal_save_test").toFile()
+        val testContext = object : android.content.ContextWrapper(null) {
+            override fun getCacheDir(): java.io.File = tempDir
+            override fun getFilesDir(): java.io.File = tempDir
+            override fun getExternalFilesDir(type: String?): java.io.File = java.io.File(tempDir, type ?: "external")
+            override fun getContentResolver(): android.content.ContentResolver? = null
+        }
+
+        val worker = com.karyar.app.data.local.entity.WorkerEntity(
+            id = 1L,
+            folderId = 1L,
+            name = "رضا صادقی",
+            role = "آرماتوربند",
+            baseDailyWage = 1_500_000L
+        )
+        val perf = com.karyar.app.domain.model.WorkerPerformance(
+            worker = worker,
+            totalShifts = 4,
+            fullDaysCount = 4,
+            regularHours = 32.0,
+            overtimeHours = 0.0,
+            baseWageTotal = 6_000_000L,
+            overtimePayTotal = 0L,
+            netPayout = 6_000_000L
+        )
+
+        val xlsxSource = ExcelExportUtil.exportToExcelXlsx(
+            context = testContext,
+            workers = listOf(worker),
+            attendanceList = emptyList(),
+            performances = listOf(perf),
+            projectName = "کارگاه برج میلاد"
+        )
+        val excelFileName = ExcelExportUtil.buildExportFileName("گزارش_اکسل", "کارگاه برج میلاد", "xlsx")
+        val savedExcel = ExcelExportUtil.saveFileToInternalStorage(
+            context = testContext,
+            sourceFile = xlsxSource,
+            desiredFileName = excelFileName,
+            mimeType = ExcelExportUtil.MIME_TYPE_XLSX
+        )
+
+        org.junit.Assert.assertTrue(savedExcel.fileName.endsWith(".xlsx"))
+        org.junit.Assert.assertTrue(savedExcel.displayPath.startsWith("Download/KarYar/"))
+        org.junit.Assert.assertNotNull(savedExcel.localFile)
+        org.junit.Assert.assertTrue(savedExcel.localFile!!.exists() && savedExcel.localFile!!.length() > 0L)
+
+        // Simulate PDF file and verify direct internal storage saving
+        val dummyPdfFile = java.io.File(tempDir, "dummy_report.pdf").apply {
+            writeBytes("%PDF-1.4\n%KarYar Test PDF Content\n%%EOF".toByteArray(Charsets.UTF_8))
+        }
+        val pdfFileName = ExcelExportUtil.buildExportFileName("گزارش_PDF", "کارگاه برج میلاد", "pdf")
+        val savedPdf = ExcelExportUtil.saveFileToInternalStorage(
+            context = testContext,
+            sourceFile = dummyPdfFile,
+            desiredFileName = pdfFileName,
+            mimeType = ExcelExportUtil.MIME_TYPE_PDF
+        )
+
+        org.junit.Assert.assertTrue(savedPdf.fileName.endsWith(".pdf"))
+        org.junit.Assert.assertTrue(savedPdf.displayPath.startsWith("Download/KarYar/"))
+        org.junit.Assert.assertNotNull(savedPdf.localFile)
+        org.junit.Assert.assertTrue(savedPdf.localFile!!.exists() && savedPdf.localFile!!.length() > 0L)
 
         tempDir.deleteRecursively()
     }
 }
+

@@ -1,6 +1,8 @@
 package com.karyar.app.ui.screens.reports
 
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,18 +23,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Engineering
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -88,6 +95,69 @@ fun ReportsScreen(
     val activeProject = folder?.name ?: "پروژه کارگاهی"
     val activeEmployer = folder?.employerName ?: "کارفرما"
     val activeForeman = folder?.foremanName ?: "سرکارگر"
+    var lastSavedPathMessage by remember { mutableStateOf<String?>(null) }
+
+    // انتخابگر مسیر دلخواه در حافظه داخلی برای فایل PDF
+    val createPdfDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(ExcelExportUtil.MIME_TYPE_PDF)
+    ) { targetUri ->
+        if (targetUri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val tempFile = PdfExportUtil.exportToPdf(
+                        context = context,
+                        projectName = activeProject,
+                        employerName = activeEmployer,
+                        foremanName = activeForeman,
+                        analytics = analytics,
+                        performances = performances,
+                        expenses = expenses
+                    )
+                    ExcelExportUtil.writeFileToUri(context, tempFile, targetUri)
+                    withContext(Dispatchers.Main) {
+                        lastSavedPathMessage = "فایل PDF در مسیر انتخاب‌شده در حافظه داخلی ذخیره شد"
+                        viewModel.showSnackbarMessage("فایل PDF با موفقیت در حافظه داخلی گوشی ذخیره شد")
+                    }
+                } catch (e: Exception) {
+                    Log.e("ReportsScreen", "Error saving PDF to custom URI", e)
+                    withContext(Dispatchers.Main) {
+                        viewModel.showSnackbarMessage("خطا در ذخیره فایل PDF در حافظه گوشی")
+                    }
+                }
+            }
+        }
+    }
+
+    // انتخابگر مسیر دلخواه در حافظه داخلی برای فایل اکسل (.xlsx)
+    val createExcelDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(ExcelExportUtil.MIME_TYPE_XLSX)
+    ) { targetUri ->
+        if (targetUri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val tempFile = ExcelExportUtil.exportToExcelXlsx(
+                        context = context,
+                        workers = workers,
+                        attendanceList = attendanceList,
+                        performances = performances,
+                        projectName = activeProject,
+                        expenses = expenses,
+                        analytics = analytics
+                    )
+                    ExcelExportUtil.writeFileToUri(context, tempFile, targetUri)
+                    withContext(Dispatchers.Main) {
+                        lastSavedPathMessage = "فایل اکسل در مسیر انتخاب‌شده در حافظه داخلی ذخیره شد"
+                        viewModel.showSnackbarMessage("فایل اکسل با موفقیت در حافظه داخلی گوشی ذخیره شد")
+                    }
+                } catch (e: Exception) {
+                    Log.e("ReportsScreen", "Error saving Excel to custom URI", e)
+                    withContext(Dispatchers.Main) {
+                        viewModel.showSnackbarMessage("خطا در ذخیره فایل اکسل در حافظه گوشی")
+                    }
+                }
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -129,7 +199,7 @@ fun ReportsScreen(
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "صدور فیش حقوقی، گزارش کارکرد و تسویه حساب پرسنل",
+                                text = "ذخیره مستقیم در حافظه داخلی گوشی (پوشه Download/KarYar) یا اشتراک‌گذاری",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -143,15 +213,173 @@ fun ReportsScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Export Action Buttons (PDF & CSV)
+                    // ردیف ۱: ذخیره مستقیم در حافظه داخلی گوشی (پوشه Download/KarYar)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // PDF Export Button
+                        // Direct Save PDF to Internal Storage
                         Button(
+                            onClick = {
+                                scope.launch(Dispatchers.IO) {
+                                    try {
+                                        val file = PdfExportUtil.exportToPdf(
+                                            context = context,
+                                            projectName = activeProject,
+                                            employerName = activeEmployer,
+                                            foremanName = activeForeman,
+                                            analytics = analytics,
+                                            performances = performances,
+                                            expenses = expenses
+                                        )
+                                        val exportFileName = ExcelExportUtil.buildExportFileName(
+                                            prefix = "گزارش_PDF",
+                                            projectName = activeProject,
+                                            extension = "pdf"
+                                        )
+                                        val saved = ExcelExportUtil.saveFileToInternalStorage(
+                                            context = context,
+                                            sourceFile = file,
+                                            desiredFileName = exportFileName,
+                                            mimeType = ExcelExportUtil.MIME_TYPE_PDF
+                                        )
+                                        withContext(Dispatchers.Main) {
+                                            lastSavedPathMessage = "ذخیره شد: ${saved.displayPath}"
+                                            viewModel.showSnackbarMessage("فایل PDF در حافظه داخلی (${saved.displayPath}) ذخیره شد")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("ReportsScreen", "Error saving PDF to internal storage", e)
+                                        withContext(Dispatchers.Main) {
+                                            viewModel.showSnackbarMessage("خطا در ذخیره فایل PDF در حافظه گوشی")
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("save_pdf_internal_button"),
+                            colors = ButtonDefaults.buttonColors(containerColor = RoseAccent),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("ذخیره PDF در گوشی", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+
+                        // Direct Save Excel (.xlsx) to Internal Storage
+                        Button(
+                            onClick = {
+                                scope.launch(Dispatchers.IO) {
+                                    try {
+                                        val file = ExcelExportUtil.exportToExcelXlsx(
+                                            context = context,
+                                            workers = workers,
+                                            attendanceList = attendanceList,
+                                            performances = performances,
+                                            projectName = activeProject,
+                                            expenses = expenses,
+                                            analytics = analytics
+                                        )
+                                        val exportFileName = ExcelExportUtil.buildExportFileName(
+                                            prefix = "گزارش_اکسل",
+                                            projectName = activeProject,
+                                            extension = "xlsx"
+                                        )
+                                        val saved = ExcelExportUtil.saveFileToInternalStorage(
+                                            context = context,
+                                            sourceFile = file,
+                                            desiredFileName = exportFileName,
+                                            mimeType = ExcelExportUtil.MIME_TYPE_XLSX
+                                        )
+                                        withContext(Dispatchers.Main) {
+                                            lastSavedPathMessage = "ذخیره شد: ${saved.displayPath}"
+                                            viewModel.showSnackbarMessage("فایل اکسل در حافظه داخلی (${saved.displayPath}) ذخیره شد")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("ReportsScreen", "Error saving Excel to internal storage", e)
+                                        withContext(Dispatchers.Main) {
+                                            viewModel.showSnackbarMessage("خطا در ذخیره فایل اکسل در حافظه گوشی")
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("save_excel_internal_button"),
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("ذخیره اکسل در گوشی", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // ردیف ۲: انتخاب پوشه دلخواه در حافظه داخلی (SAF)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val fileName = ExcelExportUtil.buildExportFileName(
+                                    prefix = "گزارش_PDF",
+                                    projectName = activeProject,
+                                    extension = "pdf"
+                                )
+                                createPdfDocumentLauncher.launch(fileName)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                                .testTag("save_pdf_custom_path_button"),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = RoseAccent, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("مسیر دلخواه PDF", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val fileName = ExcelExportUtil.buildExportFileName(
+                                    prefix = "گزارش_اکسل",
+                                    projectName = activeProject,
+                                    extension = "xlsx"
+                                )
+                                createExcelDocumentLauncher.launch(fileName)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                                .testTag("save_excel_custom_path_button"),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = EmeraldAccent, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("مسیر دلخواه اکسل", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // ردیف ۳: اشتراک‌گذاری مستقیم فایل‌ها (PDF و Excel)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // PDF Share Button
+                        OutlinedButton(
                             onClick = {
                                 scope.launch(Dispatchers.IO) {
                                     try {
@@ -166,7 +394,7 @@ fun ReportsScreen(
                                         )
                                         withContext(Dispatchers.Main) {
                                             viewModel.showSnackbarMessage("فایل PDF با موفقیت آماده شد")
-                                            ExcelExportUtil.shareFile(context, file, "application/pdf", "ارسال گزارش رسمی PDF")
+                                            ExcelExportUtil.shareFile(context, file, ExcelExportUtil.MIME_TYPE_PDF, "ارسال گزارش رسمی PDF")
                                         }
                                     } catch (e: Exception) {
                                         Log.e("ReportsScreen", "Error exporting PDF", e)
@@ -174,26 +402,26 @@ fun ReportsScreen(
                                             viewModel.showSnackbarMessage("خطا در تولید فایل PDF")
                                         }
                                     }
-                                }
+                                 }
                             },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(46.dp)
+                                .height(40.dp)
                                 .testTag("export_pdf_button"),
-                            colors = ButtonDefaults.buttonColors(containerColor = RoseAccent),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
                         ) {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("خروجی PDF", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Icon(Icons.Default.Share, contentDescription = null, tint = RoseAccent, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("اشتراک‌گذاری PDF", fontWeight = FontWeight.Medium, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
                         }
 
-                        // CSV Export Button
-                        Button(
+                        // Excel (.xlsx) Share Button
+                        OutlinedButton(
                             onClick = {
                                 scope.launch(Dispatchers.IO) {
                                     try {
-                                        val file = ExcelExportUtil.exportToExcelCsv(
+                                        val file = ExcelExportUtil.exportToExcelXlsx(
                                             context = context,
                                             workers = workers,
                                             attendanceList = attendanceList,
@@ -203,27 +431,51 @@ fun ReportsScreen(
                                             analytics = analytics
                                         )
                                         withContext(Dispatchers.Main) {
-                                            viewModel.showSnackbarMessage("فایل CSV با موفقیت ذخیره شد")
-                                            ExcelExportUtil.shareFile(context, file, "text/csv", "ارسال گزارش اکسل (CSV)")
+                                            viewModel.showSnackbarMessage("فایل اکسل با موفقیت آماده شد")
+                                            ExcelExportUtil.shareFile(
+                                                context = context,
+                                                file = file,
+                                                mimeType = ExcelExportUtil.MIME_TYPE_XLSX,
+                                                title = "ارسال گزارش اکسل (Excel)"
+                                            )
                                         }
                                     } catch (e: Exception) {
-                                        Log.e("ReportsScreen", "Error exporting CSV", e)
+                                        Log.e("ReportsScreen", "Error exporting Excel", e)
                                         withContext(Dispatchers.Main) {
-                                            viewModel.showSnackbarMessage("خطا در صدور فایل CSV")
+                                            viewModel.showSnackbarMessage("خطا در صدور فایل اکسل")
                                         }
                                     }
                                 }
                             },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(46.dp)
+                                .height(40.dp)
                                 .testTag("export_excel_button"),
-                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldAccent),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
                         ) {
-                            Icon(Icons.Default.TableChart, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("خروجی CSV", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Icon(Icons.Default.Share, contentDescription = null, tint = EmeraldAccent, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("اشتراک‌گذاری اکسل", fontWeight = FontWeight.Medium, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                        }
+                    }
+
+                    if (lastSavedPathMessage != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("saved_export_path_banner"),
+                            color = EmeraldAccent.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = lastSavedPathMessage!!,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = EmeraldAccent
+                            )
                         }
                     }
                 }

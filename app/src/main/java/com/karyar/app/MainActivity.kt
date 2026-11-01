@@ -1,10 +1,13 @@
 package com.karyar.app
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.expandVertically
@@ -37,6 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.AttachMoney
+import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -46,10 +50,12 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -77,6 +83,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -86,15 +93,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.karyar.app.ui.WorkerViewModel
+import com.karyar.app.ui.components.BackupDataDialog
+import com.karyar.app.ui.components.RestoreBackupDialog
 import com.karyar.app.ui.screens.attendance.AttendanceScreen
 import com.karyar.app.ui.screens.dashboard.DashboardScreen
 import com.karyar.app.ui.screens.folders.FoldersScreen
 import com.karyar.app.ui.screens.reports.ReportsScreen
 import com.karyar.app.ui.screens.workers.WorkersScreen
 import com.karyar.app.ui.theme.AmberAccent
+import com.karyar.app.ui.theme.CyanAccent
 import com.karyar.app.ui.theme.EmeraldAccent
 import com.karyar.app.ui.theme.MyApplicationTheme
 import com.karyar.app.ui.theme.RoseAccent
+import com.karyar.app.util.BackupUtil
 import com.karyar.app.ui.theme.Slate100
 import com.karyar.app.ui.theme.Slate200
 import com.karyar.app.ui.theme.Slate400
@@ -156,6 +167,7 @@ class MainActivity : ComponentActivity() {
 fun WorkerManagementApp(
     viewModel: WorkerViewModel = viewModel()
 ) {
+    val context = LocalContext.current
     val currentFolder by viewModel.currentFolder.collectAsState()
     val workerSearchQuery by viewModel.workerSearchQuery.collectAsState()
     val isWorkerSearchVisible by viewModel.isWorkerSearchVisible.collectAsState()
@@ -164,7 +176,26 @@ fun WorkerManagementApp(
     var showTopMenu by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var showSampleConfirm by remember { mutableStateOf(false) }
+    var showBackupDialog by remember { mutableStateOf(false) }
+    var showRestoreDialog by remember { mutableStateOf(false) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.exportBackupToUri(uri)
+        }
+    }
+
+    val openBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            pendingRestoreUri = uri
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.snackbarEvents.collect { event ->
@@ -333,6 +364,32 @@ fun WorkerManagementApp(
                             expanded = showTopMenu,
                             onDismissRequest = { showTopMenu = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("پشتیبان‌گیری از اطلاعات", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Backup, contentDescription = null, tint = EmeraldAccent)
+                                },
+                                onClick = {
+                                    showTopMenu = false
+                                    showBackupDialog = true
+                                },
+                                modifier = Modifier.testTag("top_menu_backup_data")
+                            )
+
+                            DropdownMenuItem(
+                                text = { Text("بازیابی پشتیبان", fontSize = 13.sp, fontWeight = FontWeight.Medium) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Restore, contentDescription = null, tint = CyanAccent)
+                                },
+                                onClick = {
+                                    showTopMenu = false
+                                    showRestoreDialog = true
+                                },
+                                modifier = Modifier.testTag("top_menu_restore_data")
+                            )
+
+                            HorizontalDivider(color = Slate200)
+
                             DropdownMenuItem(
                                 text = { Text("بارگذاری اطلاعات نمونه (پروژه نمونه)", fontSize = 13.sp) },
                                 leadingIcon = {
@@ -591,6 +648,61 @@ fun WorkerManagementApp(
             },
             dismissButton = {
                 TextButton(onClick = { showSampleConfirm = false }) {
+                    Text("انصراف")
+                }
+            }
+        )
+    }
+
+    if (showBackupDialog) {
+        BackupDataDialog(
+            onDismiss = { showBackupDialog = false },
+            onSaveToDeviceFile = {
+                createBackupLauncher.launch(BackupUtil.defaultBackupFileName())
+            },
+            onShareBackupFile = {
+                viewModel.createAndShareBackup(context)
+            },
+            onSaveInternalBackup = {
+                viewModel.saveQuickLocalBackup()
+            }
+        )
+    }
+
+    if (showRestoreDialog) {
+        RestoreBackupDialog(
+            onDismiss = { showRestoreDialog = false },
+            onPickFileFromDevice = {
+                openBackupLauncher.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
+            },
+            onRestoreLocalFile = { file ->
+                viewModel.restoreBackupFromLocalFile(file)
+            }
+        )
+    }
+
+    if (pendingRestoreUri != null) {
+        val uriToRestore = pendingRestoreUri!!
+        AlertDialog(
+            onDismissRequest = { pendingRestoreUri = null },
+            title = { Text("تأیید بازیابی فایل پشتیبان", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("با بازیابی این فایل پشتیبان، تمامی اطلاعات فعلی برنامه با اطلاعات داخل فایل انتخاب‌شده جایگزین خواهد شد. آیا مطمئن هستید؟")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingRestoreUri = null
+                        viewModel.restoreBackupFromUri(uriToRestore)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AmberAccent),
+                    modifier = Modifier.testTag("confirm_restore_uri_backup_button")
+                ) {
+                    Text("بله، بازیابی شود", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRestoreUri = null }) {
                     Text("انصراف")
                 }
             }

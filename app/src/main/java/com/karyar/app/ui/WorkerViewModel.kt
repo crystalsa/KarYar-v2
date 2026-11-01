@@ -19,7 +19,11 @@ import com.karyar.app.domain.model.DailyBookkeeping
 import com.karyar.app.domain.model.DashboardAnalytics
 import com.karyar.app.domain.model.DeletionImpact
 import com.karyar.app.domain.model.WorkerPerformance
+import com.karyar.app.util.BackupUtil
+import com.karyar.app.util.ExcelExportUtil
 import com.karyar.app.util.FinancialSummary
+import com.karyar.app.util.Formatters
+import com.karyar.app.util.FullBackupPayload
 import com.karyar.app.util.JalaliCalendar
 import com.karyar.app.util.WageCalculator
 import kotlinx.coroutines.CoroutineStart
@@ -1185,6 +1189,112 @@ class WorkerViewModel(
             repository.clearAllData()
             currentFolder.value = null
             selectedDateFolder.value = null
+        }
+    }
+
+    suspend fun createFullBackupJsonSync(saveLocalCopy: Boolean = true): Pair<String, java.io.File?> {
+        val payload = repository.exportFullBackupPayload()
+        val json = BackupUtil.serializeBackupToJson(payload)
+        val localFile = if (saveLocalCopy) {
+            BackupUtil.saveLocalBackupFile(getApplication(), json)
+        } else {
+            null
+        }
+        return json to localFile
+    }
+
+    suspend fun restoreFullBackupJsonSync(jsonContent: String): Result<FullBackupPayload> {
+        val payload = try {
+            BackupUtil.parseBackupFromJson(jsonContent)
+        } catch (e: Exception) {
+            val msg = e.message ?: "فایل پشتیبان نامعتبر است"
+            showSnackbarMessage(msg)
+            return Result.failure(e)
+        }
+
+        val firstFolderId = repository.restoreFullBackupPayload(payload)
+        synchronized(undoStack) {
+            undoStack.clear()
+            _lastUndoState.value = null
+        }
+        selectedDateFolder.value = null
+        currentFolder.value = firstFolderId?.let { repository.getFolderById(it) }
+        val foldersCount = Formatters.toPersianDigits(payload.folders.size)
+        val workersCount = Formatters.toPersianDigits(payload.workers.size)
+        showSnackbarMessage("پشتیبان با موفقیت بازیابی شد ($foldersCount پروژه، $workersCount کارگر)")
+        return Result.success(payload)
+    }
+
+    fun exportBackupToUri(uri: android.net.Uri) {
+        launchDb("exportBackupToUri") {
+            try {
+                val (json, _) = createFullBackupJsonSync(saveLocalCopy = true)
+                BackupUtil.writeBackupToUri(getApplication(), uri, json)
+                showSnackbarMessage("فایل پشتیبان با موفقیت ذخیره شد")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to export backup to URI", e)
+                showSnackbarMessage(e.message ?: "خطا در ذخیره فایل پشتیبان")
+            }
+        }
+    }
+
+    fun createAndShareBackup(context: Context) {
+        launchDb("createAndShareBackup") {
+            try {
+                val (_, localFile) = createFullBackupJsonSync(saveLocalCopy = true)
+                if (localFile != null) {
+                    showSnackbarMessage("نسخه پشتیبان با موفقیت ساخته شد")
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        ExcelExportUtil.shareFile(
+                            context = context,
+                            file = localFile,
+                            mimeType = "application/json",
+                            title = "اشتراک‌گذاری فایل پشتیبان کاریار"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create and share backup", e)
+                showSnackbarMessage(e.message ?: "خطا در ساخت فایل پشتیبان")
+            }
+        }
+    }
+
+    fun saveQuickLocalBackup() {
+        launchDb("saveQuickLocalBackup") {
+            try {
+                val (_, localFile) = createFullBackupJsonSync(saveLocalCopy = true)
+                if (localFile != null) {
+                    showSnackbarMessage("نسخه پشتیبان در حافظه برنامه ذخیره شد (${localFile.name})")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save local backup", e)
+                showSnackbarMessage(e.message ?: "خطا در ساخت نسخه پشتیبان")
+            }
+        }
+    }
+
+    fun restoreBackupFromUri(uri: android.net.Uri) {
+        launchDb("restoreBackupFromUri") {
+            try {
+                val json = BackupUtil.readBackupFromUri(getApplication(), uri)
+                restoreFullBackupJsonSync(json)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restore backup from URI", e)
+                showSnackbarMessage(e.message ?: "خطا در بازیابی فایل پشتیبان")
+            }
+        }
+    }
+
+    fun restoreBackupFromLocalFile(file: java.io.File) {
+        launchDb("restoreBackupFromLocalFile") {
+            try {
+                val json = file.readText(Charsets.UTF_8)
+                restoreFullBackupJsonSync(json)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restore backup from local file", e)
+                showSnackbarMessage(e.message ?: "خطا در بازیابی فایل پشتیبان")
+            }
         }
     }
 

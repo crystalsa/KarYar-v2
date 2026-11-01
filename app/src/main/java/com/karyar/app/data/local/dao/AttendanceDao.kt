@@ -70,8 +70,14 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance WHERE folderId = :folderId AND epochDay BETWEEN :startEpoch AND :endEpoch ORDER BY epochDay ASC")
     fun getAttendanceBetweenEpochDays(folderId: Long, startEpoch: Long, endEpoch: Long): Flow<List<AttendanceEntity>>
 
+    @Query("SELECT * FROM attendance ORDER BY id ASC")
+    suspend fun getAllAttendanceSync(): List<AttendanceEntity>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAttendance(attendance: AttendanceEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAttendanceReplace(attendance: AttendanceEntity): Long
 
     @Update
     suspend fun updateAttendance(attendance: AttendanceEntity)

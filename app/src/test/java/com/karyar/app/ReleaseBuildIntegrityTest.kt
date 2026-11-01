@@ -267,7 +267,7 @@ class ReleaseBuildIntegrityTest {
         }
         assertEquals("%PDF-", pdfHeader)
 
-        // ۶. بررسی تولید فایل CSV/Excel
+        // ۶. بررسی تولید فایل CSV و Excel (.xlsx) افقی و راست‌به‌چپ
         val csvFile = ExcelExportUtil.exportToExcelCsv(
             context = context,
             workers = workers,
@@ -281,7 +281,25 @@ class ReleaseBuildIntegrityTest {
         val csvContent = csvFile.readText(Charsets.UTF_8)
         assertTrue(csvContent.contains("محمدرضا احمدی"))
         assertTrue(csvContent.contains("پروژه برج میلاد"))
-        assertTrue(csvContent.contains("ناهار کارگاه"))
+        assertTrue(csvContent.contains("تعداد روزهای کار"))
+
+        val xlsxFile = ExcelExportUtil.exportToExcelXlsx(
+            context = context,
+            workers = workers,
+            attendanceList = attendances,
+            performances = summary.workerPerformances,
+            projectName = "پروژه برج میلاد",
+            expenses = expenses,
+            analytics = analytics
+        )
+        assertTrue("فایل Excel (.xlsx) باید ایجاد شود", xlsxFile.exists())
+        ZipFile(xlsxFile).use { zip ->
+            val sheetEntry = zip.getEntry("xl/worksheets/sheet1.xml")
+            assertNotNull("sheet1.xml باید در فایل اکسل وجود داشته باشد", sheetEntry)
+            val sheetXml = zip.getInputStream(sheetEntry!!).bufferedReader(Charsets.UTF_8).readText()
+            assertTrue(sheetXml.contains("rightToLeft=\"1\""))
+            assertTrue(sheetXml.contains("محمدرضا احمدی"))
+        }
 
         // ۷. در صورت وجود APK ریلیز، بررسی حفظ فونت وزیرمتن و عدم حذف آن توسط Resource Shrinker
         val releaseApk = listOf(

@@ -13,6 +13,9 @@ interface DateFolderDao {
     @Query("SELECT * FROM date_folders WHERE folderId = :folderId ORDER BY epochDay ASC, date ASC, id ASC")
     fun getDateFoldersByFolder(folderId: Long): Flow<List<DateFolderEntity>>
 
+    @Query("SELECT * FROM date_folders ORDER BY id ASC")
+    suspend fun getAllDateFoldersSync(): List<DateFolderEntity>
+
     @Query("SELECT * FROM date_folders WHERE folderId = :folderId ORDER BY epochDay ASC, date ASC, id ASC")
     suspend fun getDateFoldersByFolderSync(folderId: Long): List<DateFolderEntity>
 

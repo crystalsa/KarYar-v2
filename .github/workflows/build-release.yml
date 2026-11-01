@@ -59,6 +59,7 @@ jobs:
       - name: Restore Debug Keystore
         env:
           DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           chmod +x .github/scripts/restore-debug-keystore.sh
           .github/scripts/restore-debug-keystore.sh test
@@ -108,32 +109,27 @@ jobs:
           chmod +x .github/scripts/restore-debug-keystore.sh
           .github/scripts/restore-debug-keystore.sh build
 
-          # 1. Primary: Check custom release signing secrets
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "Decoding release keystore from KEYSTORE_BASE64..."
-            echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release.keystore" 2>/dev/null || echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+          SIGNING_B64="${KEYSTORE_BASE64:-$DEBUG_KEYSTORE_BASE64}"
+          if [ -n "$SIGNING_B64" ]; then
+            echo "Decoding release keystore from GitHub Secrets..."
+            echo "$SIGNING_B64" | tr -d '[:space:]' | base64 --decode > "$GITHUB_WORKSPACE/release.keystore" 2>/dev/null || \
+              echo "$SIGNING_B64" | tr -d '[:space:]' | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
             if [ ! -s "$GITHUB_WORKSPACE/release.keystore" ]; then
-              echo "::error::KEYSTORE_BASE64 is provided but base64 decoding failed or produced an empty file!"
+              echo "::error::Signing secret is provided but base64 decoding failed or produced an empty file!"
               exit 1
             fi
+            cp "$GITHUB_WORKSPACE/release.keystore" "$GITHUB_WORKSPACE/debug.keystore" 2>/dev/null || true
             cp "$GITHUB_WORKSPACE/release.keystore" "$GITHUB_WORKSPACE/my-upload-key.jks" 2>/dev/null || true
-            echo "has_release_keystore=true" >> $GITHUB_OUTPUT
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
-            echo "STORE_PASSWORD=$STORE_PASSWORD" >> $GITHUB_ENV
-            echo "KEY_ALIAS=${KEY_ALIAS:-upload}" >> $GITHUB_ENV
-            echo "KEY_PASSWORD=$KEY_PASSWORD" >> $GITHUB_ENV
-          # 2. Fallback: Use persistent project keystore restored by restore-debug-keystore.sh
-          elif [ -s "$GITHUB_WORKSPACE/debug.keystore" ]; then
-            echo "Using persistent project keystore for Release signing & GitHub Release..."
-            cp "$GITHUB_WORKSPACE/debug.keystore" "$GITHUB_WORKSPACE/release.keystore"
-            cp "$GITHUB_WORKSPACE/debug.keystore" "$GITHUB_WORKSPACE/my-upload-key.jks" 2>/dev/null || true
-            echo "has_release_keystore=true" >> $GITHUB_OUTPUT
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
-            echo "STORE_PASSWORD=android" >> $GITHUB_ENV
-            echo "KEY_ALIAS=androiddebugkey" >> $GITHUB_ENV
-            echo "KEY_PASSWORD=android" >> $GITHUB_ENV
+            echo "has_release_keystore=true" >> "$GITHUB_OUTPUT"
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=${STORE_PASSWORD:-android}" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=${KEY_ALIAS:-androiddebugkey}" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=${KEY_PASSWORD:-android}" >> "$GITHUB_ENV"
           else
-            echo "has_release_keystore=false" >> $GITHUB_OUTPUT
+            echo "::warning::KEYSTORE_BASE64 secret is not configured in GitHub Actions Secrets!"
+            echo "has_release_keystore=false" >> "$GITHUB_OUTPUT"
+            chmod +x .github/scripts/restore-debug-keystore.sh
+            .github/scripts/restore-debug-keystore.sh test
           fi
 
       - name: Determine Version Info (Auto-Increment)
@@ -283,7 +279,7 @@ jobs:
 
       - name: Create GitHub Release
         id: create_release
-        if: steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && (github.event_name != 'workflow_dispatch' || inputs.create_release == true)
+        if: steps.prep_signing.outputs.has_release_keystore == 'true' && steps.version_info.outputs.is_release == 'true' && steps.version_info.outputs.tag != '' && (github.event_name != 'workflow_dispatch' || inputs.create_release == true)
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.version_info.outputs.tag }}

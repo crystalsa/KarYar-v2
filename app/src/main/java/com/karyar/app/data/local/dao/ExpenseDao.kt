@@ -16,6 +16,9 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE folderId = :folderId ORDER BY timestamp DESC, id DESC")
     fun getExpensesByFolder(folderId: Long): Flow<List<ExpenseEntity>>
 
+    @Query("SELECT * FROM expenses ORDER BY id ASC")
+    suspend fun getAllExpensesSync(): List<ExpenseEntity>
+
     @Query("SELECT * FROM expenses WHERE folderId = :folderId")
     suspend fun getExpensesByFolderSync(folderId: Long): List<ExpenseEntity>
 

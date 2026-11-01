@@ -16,6 +16,9 @@ interface WorkerDao {
     @Query("SELECT * FROM workers WHERE folderId = :folderId ORDER BY id DESC")
     fun getWorkersByFolder(folderId: Long): Flow<List<WorkerEntity>>
 
+    @Query("SELECT * FROM workers ORDER BY id ASC")
+    suspend fun getAllWorkersSync(): List<WorkerEntity>
+
     @Query("SELECT * FROM workers WHERE folderId = :folderId")
     suspend fun getWorkersByFolderSync(folderId: Long): List<WorkerEntity>
 
