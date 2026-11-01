@@ -392,7 +392,15 @@ class WorkerViewModel(
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardAnalytics())
 
+    private val initialCollectorJobs = mutableListOf<kotlinx.coroutines.Job>()
+
     init {
+        lastActiveInstance?.get()?.let { previous ->
+            if (previous !== this) {
+                previous.stopCollectorsAndReceivers()
+            }
+        }
+        lastActiveInstance = java.lang.ref.WeakReference(this)
         AppDatabase.getPendingMigrationReport(application)
         try {
             timeChangeReceiver = JalaliCalendar.registerTimeChangeReceiver(application)
@@ -401,7 +409,7 @@ class WorkerViewModel(
     }
 
     private fun startInitialCollectors() {
-        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+        initialCollectorJobs += viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             JalaliCalendar.todayFlow.collect { newToday ->
                 if (selectedDailyDate.value == lastAutoToday) {
                     selectedDailyDate.value = newToday
@@ -409,7 +417,7 @@ class WorkerViewModel(
                 lastAutoToday = newToday
             }
         }
-        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+        initialCollectorJobs += viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             collectFolders(foldersSourceFlow)
         }
     }
@@ -431,13 +439,21 @@ class WorkerViewModel(
         }
     }
 
-    override fun onCleared() {
+    internal fun stopCollectorsAndReceivers() {
+        for (job in initialCollectorJobs) {
+            job.cancel()
+        }
+        initialCollectorJobs.clear()
         timeChangeReceiver?.let { receiver ->
             try {
                 getApplication<Application>().unregisterReceiver(receiver)
             } catch (_: Exception) {}
         }
         timeChangeReceiver = null
+    }
+
+    override fun onCleared() {
+        stopCollectorsAndReceivers()
         super.onCleared()
     }
 
@@ -1301,6 +1317,8 @@ class WorkerViewModel(
     companion object {
         private const val TAG = "WorkerViewModel"
         const val CALCULATION_ERROR_MESSAGE = "مقدار مالی غیرعادی در داده‌ها شناسایی شد؛ محاسبات متوقف شد"
+        @Volatile
+        private var lastActiveInstance: java.lang.ref.WeakReference<WorkerViewModel>? = null
     }
 }
 

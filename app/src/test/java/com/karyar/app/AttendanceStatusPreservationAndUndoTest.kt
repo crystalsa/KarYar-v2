@@ -45,6 +45,13 @@ class AttendanceStatusPreservationAndUndoTest {
         viewModel = WorkerViewModel(app)
     }
 
+    @org.junit.After
+    fun tearDown() {
+        if (::viewModel.isInitialized) {
+            viewModel.stopCollectorsAndReceivers()
+        }
+    }
+
     @Test
     fun testStatusChange_FullToHalfToFull_preservesManualOvertimeNotesAndAllowances() = runBlocking {
         val folder = WorkplaceFolderEntity(name = "کارگاه تست تغییر وضعیت")

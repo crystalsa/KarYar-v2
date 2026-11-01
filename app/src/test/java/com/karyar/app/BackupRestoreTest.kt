@@ -40,7 +40,14 @@ class BackupRestoreTest {
         db.dateFolderDao().clearAll()
         db.folderDao().clearAll()
         BackupUtil.getLocalBackupsDir(app).deleteRecursively()
-        viewModel = WorkerViewModel(app)
+        viewModel = WorkerViewModel(app, kotlinx.coroutines.flow.flowOf(emptyList()))
+    }
+
+    @org.junit.After
+    fun tearDown() {
+        if (::viewModel.isInitialized) {
+            viewModel.stopCollectorsAndReceivers()
+        }
     }
 
     @Test

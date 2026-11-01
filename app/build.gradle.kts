@@ -64,7 +64,14 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        it.maxHeapSize = "2g"
+      }
+    }
+  }
   sourceSets {
     getByName("test").assets.srcDirs("$projectDir/schemas")
     getByName("debug").assets.srcDirs("$projectDir/schemas")
