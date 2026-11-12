@@ -336,6 +336,8 @@ fun EditDateFolderDialog(
                                     date = nextD
                                     dayOfWeek = nextDow
                                     dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 } else {
                                     dateError = err
                                 }
@@ -376,6 +378,8 @@ fun EditDateFolderDialog(
                                     date = prevD
                                     dayOfWeek = prevDow
                                     dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 } else {
                                     dateError = err
                                 }
@@ -412,6 +416,8 @@ fun EditDateFolderDialog(
                                 date = JalaliCalendar.todayString()
                                 dayOfWeek = JalaliCalendar.todayDayOfWeek()
                                 dateError = null
+                                detectedConflictMessage = null
+                                detectedConflictWorkerNames = emptyList()
                             }
                     ) {
                         Row(
@@ -474,6 +480,8 @@ fun EditDateFolderDialog(
                                             dayOfWeek = dow
                                         }
                                         dateError = null
+                                        detectedConflictMessage = null
+                                        detectedConflictWorkerNames = emptyList()
                                     } else {
                                         dateError = err
                                     }
@@ -560,6 +568,9 @@ fun EditDateFolderDialog(
                                         ?: (baseDate to JalaliCalendar.getDayOfWeek(baseDate))
                                     date = nextD
                                     dayOfWeek = nextDow
+                                    dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 },
                                 onDecrement = {
                                     val baseDate = JalaliCalendar.formatDate(year, month, day.coerceIn(1, daysInCurrentMonth))
@@ -568,6 +579,9 @@ fun EditDateFolderDialog(
                                         ?: (baseDate to JalaliCalendar.getDayOfWeek(baseDate))
                                     date = prevD
                                     dayOfWeek = prevDow
+                                    dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 },
                                 modifier = Modifier.weight(1.1f)
                             )
@@ -586,6 +600,9 @@ fun EditDateFolderDialog(
                                     val newDateStr = JalaliCalendar.formatDate(nextY, nextM, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 },
                                 onDecrement = {
                                     val prevM = if (month > 1) month - 1 else 12
@@ -595,6 +612,9 @@ fun EditDateFolderDialog(
                                     val newDateStr = JalaliCalendar.formatDate(prevY, prevM, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 },
                                 modifier = Modifier.weight(1.1f)
                             )
@@ -612,6 +632,9 @@ fun EditDateFolderDialog(
                                     val newDateStr = JalaliCalendar.formatDate(nextY, month, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 },
                                 onDecrement = {
                                     val prevY = year - 1
@@ -620,6 +643,9 @@ fun EditDateFolderDialog(
                                     val newDateStr = JalaliCalendar.formatDate(prevY, month, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
+                                    detectedConflictMessage = null
+                                    detectedConflictWorkerNames = emptyList()
                                 },
                                 modifier = Modifier.weight(0.9f)
                             )
@@ -635,7 +661,7 @@ fun EditDateFolderDialog(
                             )
                         }
 
-                        val activeError = detectedConflictMessage ?: dateError
+                        val activeError = dateError
                         if (activeError != null) {
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
@@ -757,17 +783,17 @@ fun EditDateFolderDialog(
                         icon = Icons.Default.Edit,
                         onClick = {
                             val err = JalaliCalendar.validateDateError(date)
-                            if (err != null) {
-                                dateError = err
+                            val parsed = if (err == null) JalaliCalendar.parseDateOrNull(date) else null
+                            if (err != null || parsed == null) {
+                                dateError = err ?: "تاریخ واردشده معتبر نیست."
                             } else if (titleError == null) {
-                                val (y, m, d) = JalaliCalendar.parseDate(date)
-                                val normalizedDate = JalaliCalendar.formatDate(y, m, d)
+                                dateError = null
+                                val normalizedDate = JalaliCalendar.formatDate(parsed.first, parsed.second, parsed.third)
                                 val conflictingNames = findConflictingWorkersForTarget(normalizedDate)
                                 if (!conflictingNames.isNullOrEmpty()) {
                                     val msg = DateConflictException.buildMessage(conflictingNames.size)
                                     detectedConflictMessage = msg
                                     detectedConflictWorkerNames = conflictingNames
-                                    dateError = msg
                                 } else {
                                     onConfirm(normalizedDate, dayOfWeek, title)
                                 }

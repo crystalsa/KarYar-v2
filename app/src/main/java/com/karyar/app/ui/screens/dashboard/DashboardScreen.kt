@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.karyar.app.data.local.entity.AttendanceStatus
 import com.karyar.app.domain.model.WorkerPerformance
 import com.karyar.app.ui.WorkerViewModel
 import com.karyar.app.ui.components.CalculationErrorBanner
@@ -232,13 +233,13 @@ fun DashboardScreen(
         val fromPerf = workerPerformances.sumOf { it.totalShifts }
         if (fromPerf > 0) fromPerf
         else if (analytics.totalPersonDays > 0) analytics.totalPersonDays
-        else attendanceList.count { it.regularHours > 0 || it.hourlyHours > 0 || it.dailyWage > 0 || it.hourlyWage > 0 }
+        else attendanceList.count { it.status != AttendanceStatus.ABSENT && (it.regularHours > 0 || it.hourlyHours > 0 || it.dailyWage > 0 || it.hourlyWage > 0) }
     }
 
     // خلاصه شمارش نفرات هر روز جهت نمایش در زیرنویس کارت
     val dailyAttendanceSummary = remember(dateFolders, attendanceList) {
         val counts = dateFolders.map { df ->
-            attendanceList.count { it.date == df.date && (it.regularHours > 0 || it.hourlyHours > 0 || it.dailyWage > 0 || it.hourlyWage > 0) }
+            attendanceList.count { it.date == df.date && it.status != AttendanceStatus.ABSENT && (it.regularHours > 0 || it.hourlyHours > 0 || it.dailyWage > 0 || it.hourlyWage > 0) }
         }.filter { it > 0 }
         if (counts.size >= 2) {
             "مجموع روزها: " + counts.joinToString(" + ") { Formatters.toPersianDigits(it) } + " نفر"
@@ -711,43 +712,60 @@ private fun WorkerCumulativePerformanceCard(
                                 }
                             }
 
-                            // ۳. کل دستمزد ساعتی گرفته شده به فرمت درخواستی:
-                            // دستمزد ساعتی: ۲ ساعت ( هر ساعت 100000 تومان)= 200000 تومان
+                            // ۳. کل دستمزد ساعتی گرفته شده
                             val hHours = perf.hourlyHours
-                            val hRate = if (worker.hourlyWageRate > 0L) worker.hourlyWageRate
-                                        else if (worker.baseHourlyWage > 0L) worker.baseHourlyWage
-                                        else if (hHours > 0.0) (perf.hourlyPayTotal / hHours).toLong()
-                                        else 0L
-
+                            val profileHourlyRate = if (worker.hourlyWageRate > 0L) worker.hourlyWageRate else worker.baseHourlyWage
                             if (perf.hourlyPayTotal > 0L || hHours > 0.0 || worker.isHourlyEnabled) {
                                 val hHoursClean = Formatters.formatHours(hHours)
-                                val hRateStr = Formatters.formatCurrency(hRate)
                                 val hTotalStr = Formatters.formatCurrency(perf.hourlyPayTotal)
+                                val hourlyMatchesProfile = hHours > 0.0 && profileHourlyRate > 0L &&
+                                    perf.hourlyPayTotal == WageCalculator.roundToLong(hHours * profileHourlyRate)
+                                val hourlyText = when {
+                                    hHours > 0.0 && hourlyMatchesProfile -> {
+                                        "دستمزد ساعتی: $hHoursClean (هر ساعت ${Formatters.formatCurrency(profileHourlyRate)}) = $hTotalStr"
+                                    }
+                                    hHours > 0.0 && perf.hourlyPayTotal > 0L -> {
+                                        val avgRate = WageCalculator.roundToLong(perf.hourlyPayTotal / hHours)
+                                        if (perf.hourlyPayTotal == WageCalculator.roundToLong(hHours * avgRate)) {
+                                            "دستمزد ساعتی: $hHoursClean (هر ساعت ${Formatters.formatCurrency(avgRate)}) = $hTotalStr"
+                                        } else {
+                                            "دستمزد ساعتی: $hHoursClean (نرخ متغیر روزانه) = $hTotalStr"
+                                        }
+                                    }
+                                    hHours > 0.0 -> "دستمزد ساعتی: $hHoursClean = $hTotalStr"
+                                    else -> "دستمزد ساعتی: (هر ساعت ${Formatters.formatCurrency(profileHourlyRate)}) = ۰ تومان"
+                                }
                                 Text(
-                                    text = if (hHours > 0.0) {
-                                        "دستمزد ساعتی: $hHoursClean (هر ساعت $hRateStr) = $hTotalStr"
-                                    } else {
-                                        "دستمزد ساعتی: (هر ساعت $hRateStr) = ۰ تومان"
-                                    },
+                                    text = hourlyText,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = CyanAccent
                                 )
                             }
 
-                            // ۴. کل اضافه کاری گرفته شده به فرمت درخواستی:
-                            // اضافه کار: ۲ ساعت ( هر ساعت 100000 تومان)= 200000 تومان
+                            // ۴. کل اضافه کاری گرفته شده
                             val otHours = perf.overtimeHours
-                            val otRate = if (worker.overtimeRate > 0L) worker.overtimeRate
-                                         else if (otHours > 0.0) (perf.overtimePayTotal / otHours).toLong()
-                                         else 0L
-
                             if (perf.overtimePayTotal > 0L || otHours > 0.0) {
                                 val otHoursClean = Formatters.formatHours(otHours)
-                                val otRateStr = Formatters.formatCurrency(otRate)
                                 val otTotalStr = Formatters.formatCurrency(perf.overtimePayTotal)
+                                val otMatchesProfile = otHours > 0.0 && worker.overtimeRate > 0L &&
+                                    perf.overtimePayTotal == WageCalculator.roundToLong(otHours * worker.overtimeRate)
+                                val otText = when {
+                                    otHours > 0.0 && otMatchesProfile -> {
+                                        "اضافه کار: $otHoursClean (هر ساعت ${Formatters.formatCurrency(worker.overtimeRate)}) = $otTotalStr"
+                                    }
+                                    otHours > 0.0 && perf.overtimePayTotal > 0L -> {
+                                        val avgOtRate = WageCalculator.roundToLong(perf.overtimePayTotal / otHours)
+                                        if (perf.overtimePayTotal == WageCalculator.roundToLong(otHours * avgOtRate)) {
+                                            "اضافه کار: $otHoursClean (هر ساعت ${Formatters.formatCurrency(avgOtRate)}) = $otTotalStr"
+                                        } else {
+                                            "اضافه کار: $otHoursClean (نرخ متغیر روزانه) = $otTotalStr"
+                                        }
+                                    }
+                                    else -> "اضافه کار: $otHoursClean = $otTotalStr"
+                                }
                                 Text(
-                                    text = "اضافه کار: $otHoursClean (هر ساعت $otRateStr) = $otTotalStr",
+                                    text = otText,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = AmberAccent

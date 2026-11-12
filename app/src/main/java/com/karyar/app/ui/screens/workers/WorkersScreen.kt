@@ -537,12 +537,16 @@ fun WorkersScreen(
         val initialDayImpact = remember(dfToDelete, allWorkers, attendanceList, expenses) {
             val dayAtts = attendanceList.filter { it.dateFolderId == dfToDelete.id || it.date == dfToDelete.date }
             val dayExps = expenses.filter { it.date == dfToDelete.date }
-            com.karyar.app.util.WageCalculator.calculateDateFolderDeletionImpact(
-                dateStr = dfToDelete.date,
-                workers = allWorkers,
-                dayAttendances = dayAtts,
-                dayExpenses = dayExps
-            )
+            try {
+                com.karyar.app.util.WageCalculator.calculateDateFolderDeletionImpact(
+                    dateStr = dfToDelete.date,
+                    workers = allWorkers,
+                    dayAttendances = dayAtts,
+                    dayExpenses = dayExps
+                )
+            } catch (_: Exception) {
+                com.karyar.app.domain.model.DeletionImpact(totalAttendanceRecordsCount = dayAtts.size)
+            }
         }
         var dayDeletionImpact by remember(dfToDelete.id) { mutableStateOf(initialDayImpact) }
         androidx.compose.runtime.LaunchedEffect(dfToDelete.id) {
@@ -564,7 +568,9 @@ fun WorkersScreen(
         val currentAtt = if (targetDate.isNotBlank()) {
             attendanceList.firstOrNull { it.workerId == worker.id && it.date == targetDate }
         } else null
-        var pendingDayAttendance: AttendanceEntity? = null
+        var pendingDayAttendance by remember(worker.id, targetDate) {
+            mutableStateOf<AttendanceEntity?>(null)
+        }
         AddEditWorkerDialog(
             initialWorker = worker,
             initialAttendance = currentAtt,
@@ -612,11 +618,15 @@ fun WorkersScreen(
         val initialWorkerImpact = remember(worker, attendanceList, expenses) {
             val workerAtts = attendanceList.filter { it.workerId == worker.id }
             val workerExps = expenses.filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) && it.workerId == worker.id }
-            com.karyar.app.util.WageCalculator.calculateWorkerDeletionImpact(
-                worker = worker,
-                workerAttendances = workerAtts,
-                workerIndividualExpenses = workerExps
-            )
+            try {
+                com.karyar.app.util.WageCalculator.calculateWorkerDeletionImpact(
+                    worker = worker,
+                    workerAttendances = workerAtts,
+                    workerIndividualExpenses = workerExps
+                )
+            } catch (_: Exception) {
+                com.karyar.app.domain.model.DeletionImpact(totalAttendanceRecordsCount = workerAtts.size)
+            }
         }
         var workerDeletionImpact by remember(worker.id) { mutableStateOf(initialWorkerImpact) }
         androidx.compose.runtime.LaunchedEffect(worker.id) {

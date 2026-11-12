@@ -243,7 +243,7 @@ fun WorkerDetailDialog(
                         val isHalfDay = WageCalculator.isHalfDay(worker, attendance)
                         val isFullDay = WageCalculator.isFullDay(worker, attendance)
 
-                        val dayCalc = WageCalculator.calculateDay(worker, attendance)
+                        val dayCalc = WageCalculator.calculateDaySafe(worker, attendance)
 
                         if (attendance != null) {
                             val attStatusText = when {
@@ -273,9 +273,7 @@ fun WorkerDetailDialog(
                                 valueColor = RoseAccent
                             )
                         } else if (isHourly) {
-                            val hRate = if (attendance != null && attendance.hourlyWageRate > 0) attendance.hourlyWageRate
-                                        else if (attendance != null && attendance.hourlyWage > 0) attendance.hourlyWage
-                                        else if (worker.hourlyWageRate > 0) worker.hourlyWageRate else worker.baseHourlyWage
+                            val hRate = WageCalculator.resolveHourlyRate(worker, attendance)
                             CompactDetailRow(
                                 label = "دستمزد ساعتی:",
                                 value = if (dayCalc.hourlyHours > 0) {
@@ -296,7 +294,7 @@ fun WorkerDetailDialog(
                         }
 
                         if (!isAbsent && dayCalc.overtimeHours > 0.0) {
-                            val otRate = if (attendance != null && attendance.overtimeRate > 0) attendance.overtimeRate else worker.overtimeRate
+                            val otRate = WageCalculator.resolveOvertimeRate(worker, attendance)
                             CompactDetailRow(
                                 "اضافه کاری:",
                                 "${Formatters.formatHours(dayCalc.overtimeHours)} (هر ساعت ${Formatters.formatCurrency(otRate)}) = ${Formatters.formatCurrency(dayCalc.overtimePay)}",
@@ -372,10 +370,20 @@ fun WorkerDetailDialog(
                 }
 
                 // Personal Description / Notes
-                if (worker.notes.isNotBlank()) {
+                val attNote = attendance?.notes?.takeIf { it.isNotBlank() }
+                if (attNote != null) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "یادداشت: ${worker.notes}",
+                        text = "یادداشت این روز: $attNote",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp
+                    )
+                }
+                if (worker.notes.isNotBlank() && worker.notes != attNote) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "یادداشت پروفایل: ${worker.notes}",
                         fontSize = 11.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 16.sp

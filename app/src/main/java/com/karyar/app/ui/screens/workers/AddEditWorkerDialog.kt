@@ -220,12 +220,11 @@ fun AddEditWorkerDialog(
     }
 
     var isActive by remember { mutableStateOf(initialWorker?.isActive ?: true) }
-    var notes by remember {
-        mutableStateOf(
-            if (initialAttendance != null && initialAttendance.notes.isNotBlank()) initialAttendance.notes
-            else (initialWorker?.notes ?: "")
-        )
+    val initialNotes = remember {
+        if (initialAttendance != null && initialAttendance.notes.isNotBlank()) initialAttendance.notes
+        else (initialWorker?.notes ?: "")
     }
+    var notes by remember { mutableStateOf(initialNotes) }
     var selectedColor by remember { mutableStateOf(initialWorker?.colorTag ?: 0xFFD97706L) }
 
     val initTransit = if (useAttAllowances) initialAttendance!!.transitAllowance else (initialWorker?.transitAllowance ?: 0L)
@@ -285,6 +284,9 @@ fun AddEditWorkerDialog(
             (isOvertimeEnabled != initialIsOvertimeEnabled) ||
             (overtimeRate != initialOvertimeRate) ||
             (overtimeHours != initialOvertimeHours) ||
+            (isActive != (initialWorker?.isActive ?: true)) ||
+            (notes != initialNotes) ||
+            (selectedColor != (initialWorker?.colorTag ?: 0xFFD97706L)) ||
             (parsedCurrentTransit != initTransit) ||
             (!transitImpact.equals(initTransitImpact, ignoreCase = true)) ||
             (parsedCurrentFood != initFood) ||

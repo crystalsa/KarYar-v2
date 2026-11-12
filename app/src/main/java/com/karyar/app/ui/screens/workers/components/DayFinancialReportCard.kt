@@ -62,8 +62,15 @@ fun DayFinancialReportCard(
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val dailyBookkeeping = WageCalculator.calculateDailyBookkeepingSafe(
+        dateStr = targetDayFolder.date,
+        workers = allWorkers,
+        attendances = attendanceList,
+        expenses = expenses
+    )
+
     val workersById = allWorkers.associateBy { it.id }
-    val dayAttendances = attendanceList.filter { it.date == targetDayFolder.date }
+    val dayAttendances = dailyBookkeeping.attendances
 
     var dayPresentCount = 0
     var dayHalfDayCount = 0
@@ -84,10 +91,12 @@ fun DayFinancialReportCard(
     var accommodationDeduction = 0L
     var medicalAllowance = 0L
     var medicalDeduction = 0L
+    var otherAllowance = 0L
+    var otherDeduction = 0L
 
     for (att in dayAttendances) {
         val worker = workersById[att.workerId] ?: continue
-        val res = WageCalculator.calculateDay(worker, att)
+        val res = WageCalculator.calculateDayOrNull(worker, att) ?: continue
         val isAbsent = WageCalculator.isAbsent(worker, att)
         val isHourly = WageCalculator.isHourly(worker, att)
         val isHalfDay = WageCalculator.isHalfDay(worker, att)
@@ -121,12 +130,24 @@ fun DayFinancialReportCard(
         medicalDeduction += res.medicalDeduction
     }
 
-    val dailyBookkeeping = WageCalculator.calculateDailyBookkeeping(
-        dateStr = targetDayFolder.date,
-        workers = allWorkers,
-        attendances = attendanceList,
-        expenses = expenses
-    )
+    for (exp in dailyBookkeeping.expenses) {
+        if (!exp.scope.equals("INDIVIDUAL", ignoreCase = true) || exp.workerId == null || !workersById.containsKey(exp.workerId)) {
+            continue
+        }
+        val isAllowance = exp.impactType.equals("ALLOWANCE", ignoreCase = true)
+        when {
+            exp.category.equals("TRANSIT", ignoreCase = true) ->
+                if (isAllowance) transitAllowance += exp.amount else transitDeduction += exp.amount
+            exp.category.equals("FOOD", ignoreCase = true) ->
+                if (isAllowance) foodAllowance += exp.amount else foodDeduction += exp.amount
+            exp.category.equals("ACCOMMODATION", ignoreCase = true) ->
+                if (isAllowance) accommodationAllowance += exp.amount else accommodationDeduction += exp.amount
+            exp.category.equals("MEDICAL", ignoreCase = true) ->
+                if (isAllowance) medicalAllowance += exp.amount else medicalDeduction += exp.amount
+            else ->
+                if (isAllowance) otherAllowance += exp.amount else otherDeduction += exp.amount
+        }
+    }
 
     val dayGroupExpenses = dailyBookkeeping.groupExpenses
 
@@ -282,7 +303,7 @@ fun DayFinancialReportCard(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "${Formatters.formatCurrency(dayHourlyPay)} (${Formatters.toPersianDigits(dayHourlyHours)} ساعت)",
+                                    text = "${Formatters.formatCurrency(dayHourlyPay)} (${Formatters.formatHours(dayHourlyHours)})",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = CyanAccent
@@ -304,7 +325,7 @@ fun DayFinancialReportCard(
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "${Formatters.formatCurrency(dayOvertimePay)} (${Formatters.toPersianDigits(dayOvertimeHours)} ساعت)",
+                                    text = "${Formatters.formatCurrency(dayOvertimePay)} (${Formatters.formatHours(dayOvertimeHours)})",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = AmberAccent
@@ -356,6 +377,15 @@ fun DayFinancialReportCard(
                         allowance = medicalAllowance,
                         deduction = medicalDeduction
                     )
+
+                    if (otherAllowance > 0L || otherDeduction > 0L) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        DayAllowanceDeductionItem(
+                            title = "سایر هزینه‌های فردی",
+                            allowance = otherAllowance,
+                            deduction = otherDeduction
+                        )
+                    }
 
                     if (dayGroupExpenses > 0) {
                         Spacer(modifier = Modifier.height(4.dp))

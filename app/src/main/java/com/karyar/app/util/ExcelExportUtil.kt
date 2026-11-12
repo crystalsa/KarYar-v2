@@ -115,7 +115,8 @@ object ExcelExportUtil {
         if (str.isEmpty() || str == "-" || str == "+") return false
         val trimmed = str.trim()
         if (trimmed.isEmpty() || trimmed == "-" || trimmed == "+") return false
-        return trimmed.toDoubleOrNull() != null
+        val parsed = trimmed.toDoubleOrNull() ?: return false
+        return parsed.isFinite()
     }
 
     /**
@@ -479,8 +480,8 @@ object ExcelExportUtil {
             sb.append("""    <row r="$excelRowNum" ht="22" customHeight="1">""").append('\n')
             for ((colIdx, cellValue) in rowCells.withIndex()) {
                 val cellRef = "${columnIndexToLetter(colIdx + 1)}$excelRowNum"
-                // Keep phone (colIdx 32) and nationalId (colIdx 33) as text so leading zeros like 0912... are preserved
-                val forceTextColumn = colIdx == 32 || colIdx == 33
+                // Keep text columns (name, role, workSummary, phone, nationalId, isActive, projectName, notes) as inlineStr
+                val forceTextColumn = colIdx in setOf(0, 1, 7, 32, 33, 34, 35, 36)
                 val numericStr = when (cellValue) {
                     is Int, is Long -> cellValue.toString()
                     is Double -> if (cellValue.isFinite()) formatCsvHours(cellValue) else null

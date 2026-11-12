@@ -205,6 +205,34 @@ object BackupUtil {
         return root.toString(2)
     }
 
+    private fun optFiniteNonNegativeDouble(obj: JSONObject, key: String, default: Double): Double {
+        val raw = obj.optDouble(key, default)
+        return if (raw.isFinite() && raw >= 0.0) raw else default
+    }
+
+    private fun optNonNegativeLong(obj: JSONObject, key: String, default: Long): Long {
+        val raw = obj.optLong(key, default)
+        return if (raw >= 0L) raw else default
+    }
+
+    private fun normalizeImpact(raw: String, default: String = "ALLOWANCE"): String {
+        val upper = raw.trim().uppercase()
+        return if (upper == "ALLOWANCE" || upper == "DEDUCTION") upper else default
+    }
+
+    private fun normalizeScope(raw: String): String {
+        val upper = raw.trim().uppercase()
+        return if (upper == "INDIVIDUAL" || upper == "GROUP") upper else "GROUP"
+    }
+
+    private fun normalizeCategory(raw: String): String {
+        val upper = raw.trim().uppercase()
+        return when (upper) {
+            "TRANSIT", "ACCOMMODATION", "FOOD", "MEDICAL", "OTHER" -> upper
+            else -> "OTHER"
+        }
+    }
+
     fun parseBackupFromJson(jsonString: String): FullBackupPayload {
         val trimmed = jsonString.trim().removePrefix("\uFEFF")
         if (trimmed.isEmpty()) {
@@ -229,7 +257,7 @@ object BackupUtil {
         val foldersArray = root.optJSONArray("workplace_folders") ?: JSONArray()
         val folders = mutableListOf<WorkplaceFolderEntity>()
         for (i in 0 until foldersArray.length()) {
-            val obj = foldersArray.getJSONObject(i)
+            val obj = foldersArray.optJSONObject(i) ?: continue
             val id = obj.optLong("id", 0L)
             val name = obj.optString("name", "").trim()
             if (name.isEmpty()) continue
@@ -249,7 +277,7 @@ object BackupUtil {
         val dateFoldersArray = root.optJSONArray("date_folders") ?: JSONArray()
         val dateFolders = mutableListOf<DateFolderEntity>()
         for (i in 0 until dateFoldersArray.length()) {
-            val obj = dateFoldersArray.getJSONObject(i)
+            val obj = dateFoldersArray.optJSONObject(i) ?: continue
             val rawDate = obj.optString("date", "")
             val fixedDate = JalaliCalendar.fixLegacyInvalidDate(rawDate) ?: rawDate
             val epochDay = JalaliCalendar.safeEpochDay(fixedDate)
@@ -272,7 +300,7 @@ object BackupUtil {
         val workersArray = root.optJSONArray("workers") ?: JSONArray()
         val workers = mutableListOf<WorkerEntity>()
         for (i in 0 until workersArray.length()) {
-            val obj = workersArray.getJSONObject(i)
+            val obj = workersArray.optJSONObject(i) ?: continue
             workers.add(
                 WorkerEntity(
                     id = obj.optLong("id", 0L),
@@ -281,25 +309,25 @@ object BackupUtil {
                     role = obj.optString("role", ""),
                     phone = obj.optString("phone", ""),
                     nationalId = obj.optString("nationalId", ""),
-                    baseDailyWage = obj.optLong("baseDailyWage", 0L),
-                    baseHourlyWage = obj.optLong("baseHourlyWage", 0L),
+                    baseDailyWage = optNonNegativeLong(obj, "baseDailyWage", 0L),
+                    baseHourlyWage = optNonNegativeLong(obj, "baseHourlyWage", 0L),
                     isHourlyEnabled = obj.optBoolean("isHourlyEnabled", false),
-                    hourlyWageRate = obj.optLong("hourlyWageRate", 0L),
-                    hourlyHours = obj.optDouble("hourlyHours", 0.0),
+                    hourlyWageRate = optNonNegativeLong(obj, "hourlyWageRate", 0L),
+                    hourlyHours = optFiniteNonNegativeDouble(obj, "hourlyHours", 0.0),
                     isOvertimeEnabled = obj.optBoolean("isOvertimeEnabled", false),
-                    overtimeRate = obj.optLong("overtimeRate", 0L),
-                    overtimeHours = obj.optDouble("overtimeHours", 0.0),
+                    overtimeRate = optNonNegativeLong(obj, "overtimeRate", 0L),
+                    overtimeHours = optFiniteNonNegativeDouble(obj, "overtimeHours", 0.0),
                     isActive = obj.optBoolean("isActive", true),
                     notes = obj.optString("notes", ""),
                     colorTag = obj.optLong("colorTag", 0xFFD97706L),
-                    transitAllowance = obj.optLong("transitAllowance", 0L),
-                    transitImpact = obj.optString("transitImpact", "ALLOWANCE"),
-                    foodAllowance = obj.optLong("foodAllowance", 0L),
-                    foodImpact = obj.optString("foodImpact", "ALLOWANCE"),
-                    accommodationAllowance = obj.optLong("accommodationAllowance", 0L),
-                    accommodationImpact = obj.optString("accommodationImpact", "ALLOWANCE"),
-                    medicalAllowance = obj.optLong("medicalAllowance", 0L),
-                    medicalImpact = obj.optString("medicalImpact", "ALLOWANCE"),
+                    transitAllowance = optNonNegativeLong(obj, "transitAllowance", 0L),
+                    transitImpact = normalizeImpact(obj.optString("transitImpact", "ALLOWANCE")),
+                    foodAllowance = optNonNegativeLong(obj, "foodAllowance", 0L),
+                    foodImpact = normalizeImpact(obj.optString("foodImpact", "ALLOWANCE")),
+                    accommodationAllowance = optNonNegativeLong(obj, "accommodationAllowance", 0L),
+                    accommodationImpact = normalizeImpact(obj.optString("accommodationImpact", "ALLOWANCE")),
+                    medicalAllowance = optNonNegativeLong(obj, "medicalAllowance", 0L),
+                    medicalImpact = normalizeImpact(obj.optString("medicalImpact", "ALLOWANCE")),
                     createdAt = obj.optLong("createdAt", System.currentTimeMillis())
                 )
             )
@@ -308,7 +336,7 @@ object BackupUtil {
         val attendancesArray = root.optJSONArray("attendance") ?: JSONArray()
         val attendances = mutableListOf<AttendanceEntity>()
         for (i in 0 until attendancesArray.length()) {
-            val obj = attendancesArray.getJSONObject(i)
+            val obj = attendancesArray.optJSONObject(i) ?: continue
             val rawDate = obj.optString("date", "")
             val fixedDate = JalaliCalendar.fixLegacyInvalidDate(rawDate) ?: rawDate
             val epochDay = JalaliCalendar.safeEpochDay(fixedDate)
@@ -330,25 +358,25 @@ object BackupUtil {
                     timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
                     entryTime = obj.optString("entryTime", "08:00"),
                     exitTime = obj.optString("exitTime", "17:00"),
-                    regularHours = obj.optDouble("regularHours", 8.0),
-                    overtimeHours = obj.optDouble("overtimeHours", 0.0),
-                    overtimeRate = obj.optLong("overtimeRate", 0L),
-                    hourlyWageRate = obj.optLong("hourlyWageRate", 0L),
-                    hourlyHours = obj.optDouble("hourlyHours", 0.0),
-                    dailyWage = obj.optLong("dailyWage", 0L),
-                    hourlyWage = obj.optLong("hourlyWage", 0L),
+                    regularHours = optFiniteNonNegativeDouble(obj, "regularHours", 8.0),
+                    overtimeHours = optFiniteNonNegativeDouble(obj, "overtimeHours", 0.0),
+                    overtimeRate = optNonNegativeLong(obj, "overtimeRate", 0L),
+                    hourlyWageRate = optNonNegativeLong(obj, "hourlyWageRate", 0L),
+                    hourlyHours = optFiniteNonNegativeDouble(obj, "hourlyHours", 0.0),
+                    dailyWage = optNonNegativeLong(obj, "dailyWage", 0L),
+                    hourlyWage = optNonNegativeLong(obj, "hourlyWage", 0L),
                     workplaceName = obj.optString("workplaceName", ""),
                     employerName = obj.optString("employerName", ""),
                     foremanName = obj.optString("foremanName", ""),
                     notes = obj.optString("notes", ""),
-                    transitAllowance = obj.optLong("transitAllowance", 0L),
-                    transitImpact = obj.optString("transitImpact", "ALLOWANCE"),
-                    foodAllowance = obj.optLong("foodAllowance", 0L),
-                    foodImpact = obj.optString("foodImpact", "ALLOWANCE"),
-                    accommodationAllowance = obj.optLong("accommodationAllowance", 0L),
-                    accommodationImpact = obj.optString("accommodationImpact", "ALLOWANCE"),
-                    medicalAllowance = obj.optLong("medicalAllowance", 0L),
-                    medicalImpact = obj.optString("medicalImpact", "ALLOWANCE"),
+                    transitAllowance = optNonNegativeLong(obj, "transitAllowance", 0L),
+                    transitImpact = normalizeImpact(obj.optString("transitImpact", "ALLOWANCE")),
+                    foodAllowance = optNonNegativeLong(obj, "foodAllowance", 0L),
+                    foodImpact = normalizeImpact(obj.optString("foodImpact", "ALLOWANCE")),
+                    accommodationAllowance = optNonNegativeLong(obj, "accommodationAllowance", 0L),
+                    accommodationImpact = normalizeImpact(obj.optString("accommodationImpact", "ALLOWANCE")),
+                    medicalAllowance = optNonNegativeLong(obj, "medicalAllowance", 0L),
+                    medicalImpact = normalizeImpact(obj.optString("medicalImpact", "ALLOWANCE")),
                     hasCustomAllowances = obj.optBoolean("hasCustomAllowances", false)
                 )
             )
@@ -357,24 +385,28 @@ object BackupUtil {
         val expensesArray = root.optJSONArray("expenses") ?: JSONArray()
         val expenses = mutableListOf<ExpenseEntity>()
         for (i in 0 until expensesArray.length()) {
-            val obj = expensesArray.getJSONObject(i)
+            val obj = expensesArray.optJSONObject(i) ?: continue
             val rawDate = obj.optString("date", "")
             val fixedDate = JalaliCalendar.fixLegacyInvalidDate(rawDate) ?: rawDate
             val epochDay = JalaliCalendar.safeEpochDay(fixedDate)
             val workerId = if (obj.isNull("workerId")) null else obj.optLong("workerId", 0L).takeIf { it > 0L }
             val workerName = if (obj.isNull("workerName")) null else obj.optString("workerName", "").takeIf { it.isNotBlank() }
+            val normalizedScope = normalizeScope(obj.optString("scope", "GROUP"))
             expenses.add(
                 ExpenseEntity(
                     id = obj.optLong("id", 0L),
                     folderId = obj.optLong("folderId", 0L),
                     title = obj.optString("title", ""),
-                    category = obj.optString("category", "OTHER"),
-                    scope = obj.optString("scope", "GROUP"),
-                    impactType = obj.optString("impactType", "DEDUCTION"),
+                    category = normalizeCategory(obj.optString("category", "OTHER")),
+                    scope = normalizedScope,
+                    impactType = normalizeImpact(
+                        obj.optString("impactType", "DEDUCTION"),
+                        default = "DEDUCTION"
+                    ),
                     workerId = workerId,
                     workerName = workerName,
-                    amount = obj.optLong("amount", 0L),
-                    accommodationDays = obj.optInt("accommodationDays", 0),
+                    amount = optNonNegativeLong(obj, "amount", 0L),
+                    accommodationDays = obj.optInt("accommodationDays", 0).coerceAtLeast(0),
                     date = fixedDate,
                     epochDay = epochDay,
                     timestamp = obj.optLong("timestamp", System.currentTimeMillis()),

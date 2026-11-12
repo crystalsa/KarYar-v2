@@ -284,14 +284,9 @@ fun WorkerItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    val dayCalc = WageCalculator.calculateDay(worker, attendance)
-                    val hRate = if (attendance != null && attendance.hourlyWageRate > 0) attendance.hourlyWageRate
-                    else if (attendance != null && attendance.hourlyWage > 0) attendance.hourlyWage
-                    else if (worker.hourlyWageRate > 0) worker.hourlyWageRate
-                    else worker.baseHourlyWage
-
-                    val otRate = if (attendance != null && attendance.overtimeRate > 0) attendance.overtimeRate
-                    else worker.overtimeRate
+                    val dayCalc = WageCalculator.calculateDaySafe(worker, attendance)
+                    val hRate = WageCalculator.resolveHourlyRate(worker, attendance)
+                    val otRate = WageCalculator.resolveOvertimeRate(worker, attendance)
 
                     val netDayPayout = dayCalc.netPayout
 
@@ -482,10 +477,11 @@ fun WorkerItemCard(
                 }
             }
 
-            if (worker.notes.isNotBlank()) {
+            val displayNote = attendance?.notes?.takeIf { it.isNotBlank() } ?: worker.notes.takeIf { it.isNotBlank() }
+            if (displayNote != null) {
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = "یادداشت: ${worker.notes}",
+                    text = "یادداشت: $displayNote",
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     maxLines = 1

@@ -698,11 +698,12 @@ private fun WorkerPaySlipCard(perf: WorkerPerformance) {
                     .background(Slate100)
                     .padding(10.dp)
             ) {
-                if (perf.worker.isHourlyEnabled) {
-                    ReportRow("ساعات کارکرد عادی:", Formatters.formatHours(perf.hourlyHours))
-                } else {
+                val hasDayBasedWork = perf.fullDaysCount > 0 || perf.halfDaysCount > 0 || perf.baseWageTotal > 0L
+                if (!perf.worker.isHourlyEnabled || hasDayBasedWork) {
                     ReportRow("وضعیت کارکرد:", perf.formatWorkSummary())
                     ReportRow("دستمزد پایه تجمیعی:", Formatters.formatCurrency(perf.baseWageTotal))
+                } else {
+                    ReportRow("ساعات کارکرد عادی:", Formatters.formatHours(perf.hourlyHours))
                 }
 
                 if (perf.hourlyPayTotal > 0 || perf.hourlyHours > 0) {

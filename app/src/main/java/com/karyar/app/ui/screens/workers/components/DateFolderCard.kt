@@ -56,54 +56,29 @@ fun DateFolderCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val totalWages = workers.sumOf { worker ->
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date }
-        val isHourly = WageCalculator.isHourly(worker, att)
-        val isAbsent = WageCalculator.isAbsent(worker, att)
-        val isHalfDay = WageCalculator.isHalfDay(worker, att)
-        when {
-            isAbsent -> 0L
-            isHourly -> {
-                val hHours = if (att != null && att.hourlyHours > 0) att.hourlyHours else (if (worker.hourlyHours > 0) worker.hourlyHours else 0.0)
-                val hRate = if (att != null && att.hourlyWageRate > 0) att.hourlyWageRate else (if (worker.hourlyWageRate > 0) worker.hourlyWageRate else worker.baseHourlyWage)
-                (hHours * hRate).toLong()
-            }
-            isHalfDay -> if (att?.dailyWage != null && att.dailyWage > 0) att.dailyWage else worker.baseDailyWage / 2
-            att != null && att.dailyWage > 0 -> att.dailyWage
-            else -> worker.baseDailyWage
+    var totalWages = 0L
+    var totalTransit = 0L
+    var totalFood = 0L
+    var totalAccommodation = 0L
+    var totalMedical = 0L
+    var presentCount = 0
+    var folderTotalDayPayout = 0L
+
+    for (worker in workers) {
+        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date } ?: continue
+        val dayRes = WageCalculator.calculateDayOrNull(worker, att) ?: continue
+        if (dayRes.isWorkingDay) {
+            presentCount++
         }
-    }
-    val totalTransit = workers.filter { worker ->
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date }
-        !WageCalculator.isAbsent(worker, att)
-    }.sumOf { if (it.transitImpact == "ALLOWANCE") it.transitAllowance else -it.transitAllowance }
-
-    val totalFood = workers.filter { worker ->
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date }
-        !WageCalculator.isAbsent(worker, att)
-    }.sumOf { if (it.foodImpact == "ALLOWANCE") it.foodAllowance else -it.foodAllowance }
-
-    val totalAccommodation = workers.filter { worker ->
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date }
-        !WageCalculator.isAbsent(worker, att)
-    }.sumOf { if (it.accommodationImpact == "ALLOWANCE") it.accommodationAllowance else -it.accommodationAllowance }
-
-    val totalMedical = workers.filter { worker ->
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date }
-        !WageCalculator.isAbsent(worker, att)
-    }.sumOf { if (it.medicalImpact == "ALLOWANCE") it.medicalAllowance else -it.medicalAllowance }
-
-    val presentCount = workers.count { worker ->
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date }
-        att != null && !WageCalculator.isAbsent(worker, att)
-    }
-
-    val folderTotalDayPayout = workers.sumOf { worker ->
-        val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == dateFolder.date }
-        if (att != null) {
-            WageCalculator.calculateDay(worker, att).netPayout
-        } else {
-            0L
+        try {
+            totalWages = Math.addExact(totalWages, Math.addExact(dayRes.baseWage, dayRes.hourlyPay))
+            totalTransit = Math.addExact(totalTransit, dayRes.transitAllowance - dayRes.transitDeduction)
+            totalFood = Math.addExact(totalFood, dayRes.foodAllowance - dayRes.foodDeduction)
+            totalAccommodation = Math.addExact(totalAccommodation, dayRes.accommodationAllowance - dayRes.accommodationDeduction)
+            totalMedical = Math.addExact(totalMedical, dayRes.medicalAllowance - dayRes.medicalDeduction)
+            folderTotalDayPayout = Math.addExact(folderTotalDayPayout, dayRes.netPayout)
+        } catch (_: ArithmeticException) {
+            // Skip record sum if overflow
         }
     }
 

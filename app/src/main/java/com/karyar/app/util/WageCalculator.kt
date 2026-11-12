@@ -560,20 +560,14 @@ object WageCalculator {
      * ۳. اگر `worker.overtimeRate > 0L` باشد: `worker.overtimeRate`.
      * ۴. در غیر این صورت: محاسبه خودکار با ضریب [overtimeMultiplier] (پیش‌فرض ۱٫۴ برابر نرخ پایه ساعتی یا `baseDailyWage / 8.0`).
      */
-    fun resolveOvertimePay(
+    fun resolveOvertimeRate(
         worker: WorkerEntity,
         att: AttendanceEntity?,
-        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER,
-        isHourly: Boolean = isHourly(worker, att),
         usesRecordValues: Boolean = att?.usesRecordValues == true,
+        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER,
         hourlyRate: Long = resolveHourlyRate(worker, att, usesRecordValues)
     ): Long {
-        val hHours = att?.hourlyHours ?: 0.0
-        val otHours = att?.overtimeHours ?: 0.0
-        if (!otHours.isFinite() || otHours < 0.0) {
-            throw ArithmeticException("ساعت اضافه‌کاری نامعتبر است: $otHours")
-        }
-        val otRate = if (usesRecordValues && att != null) {
+        return if (usesRecordValues && att != null) {
             att.overtimeRate
         } else if (att != null && att.overtimeRate > 0L) {
             att.overtimeRate
@@ -589,6 +583,28 @@ object WageCalculator {
             }
             roundToLong(baseRate * overtimeMultiplier)
         }
+    }
+
+    fun resolveOvertimePay(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER,
+        isHourly: Boolean = isHourly(worker, att),
+        usesRecordValues: Boolean = att?.usesRecordValues == true,
+        hourlyRate: Long = resolveHourlyRate(worker, att, usesRecordValues)
+    ): Long {
+        val hHours = att?.hourlyHours ?: 0.0
+        val otHours = att?.overtimeHours ?: 0.0
+        if (!otHours.isFinite() || otHours < 0.0) {
+            throw ArithmeticException("ساعت اضافه‌کاری نامعتبر است: $otHours")
+        }
+        val otRate = resolveOvertimeRate(
+            worker = worker,
+            att = att,
+            usesRecordValues = usesRecordValues,
+            overtimeMultiplier = overtimeMultiplier,
+            hourlyRate = hourlyRate
+        )
 
         val canHaveOvertime = if (isHourly) hHours > 0.0 else true
         return if (canHaveOvertime && otHours > 0.0 && otRate > 0L) {
@@ -855,6 +871,48 @@ object WageCalculator {
     ): Long {
         val result = calculateDay(worker, att, overtimeMultiplier)
         return if (coerceNonNegative) result.clampedNetPayout else result.netPayout
+    }
+
+    /**
+     * نسخه ایمن [calculateDay] برای استفاده در رابط کاربری (Compose):
+     * در صورت سرریز یا مقادیر نامعتبر در دیتابیس، به جای کرش کردن برنامه `null` برمی‌گرداند.
+     */
+    fun calculateDayOrNull(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER
+    ): DayCalculationResult? {
+        return try {
+            if (att != null && findAttendanceAnomalies(worker, att).isNotEmpty()) {
+                return null
+            }
+            calculateDay(worker, att, overtimeMultiplier)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * نسخه ایمن با مقدار پیش‌فرض صفر برای نمایش در کارت‌های رابط کاربری بدون خطر کرش.
+     */
+    fun calculateDaySafe(
+        worker: WorkerEntity,
+        att: AttendanceEntity?,
+        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER
+    ): DayCalculationResult {
+        return calculateDayOrNull(worker, att, overtimeMultiplier) ?: DayCalculationResult(
+            isWorkingDay = false,
+            regularHours = 0.0,
+            hourlyHours = 0.0,
+            overtimeHours = 0.0,
+            baseWage = 0L,
+            hourlyPay = 0L,
+            overtimePay = 0L,
+            totalAllowances = 0L,
+            totalDeductions = 0L,
+            netPayout = 0L,
+            clampedNetPayout = 0L
+        )
     }
 
     /**
@@ -1191,8 +1249,51 @@ object WageCalculator {
 
         val validAttendances = validAttendancesByWorker.values.flatten()
 
-        val groupExpenses = expenses.filter { it.scope.equals("GROUP", ignoreCase = true) }
-        val totalGroupExpenses = groupExpenses.sumOfExact { it.amount }
+        val validExpenses = mutableListOf<ExpenseEntity>()
+        var runningGroupExpenses = 0L
+        var runningTransitExpenses = 0L
+        var runningAccommodationExpenses = 0L
+        var runningAccommodationDays = 0
+        var runningFoodExpenses = 0L
+        var runningMedicalExpenses = 0L
+        var runningOtherExpenses = 0L
+        var runningIndividualExpenses = 0L
+        var runningGrandExpenses = 0L
+
+        for (exp in expenses) {
+            try {
+                if (exp.amount < 0L || exp.amount > MAX_EXPENSE_AMOUNT) {
+                    throw ArithmeticException("مبلغ هزینه خارج از محدوده مجاز")
+                }
+                val nextGrand = Math.addExact(runningGrandExpenses, exp.amount)
+                val isGroup = exp.scope.equals("GROUP", ignoreCase = true)
+                val isIndiv = exp.scope.equals("INDIVIDUAL", ignoreCase = true)
+                val nextGroup = if (isGroup) Math.addExact(runningGroupExpenses, exp.amount) else runningGroupExpenses
+                val nextIndiv = if (isIndiv) Math.addExact(runningIndividualExpenses, exp.amount) else runningIndividualExpenses
+                val nextTransit = if (exp.category.equals("TRANSIT", ignoreCase = true)) Math.addExact(runningTransitExpenses, exp.amount) else runningTransitExpenses
+                val nextAccom = if (exp.category.equals("ACCOMMODATION", ignoreCase = true)) Math.addExact(runningAccommodationExpenses, exp.amount) else runningAccommodationExpenses
+                val nextFood = if (exp.category.equals("FOOD", ignoreCase = true)) Math.addExact(runningFoodExpenses, exp.amount) else runningFoodExpenses
+                val nextMed = if (exp.category.equals("MEDICAL", ignoreCase = true)) Math.addExact(runningMedicalExpenses, exp.amount) else runningMedicalExpenses
+                val nextOther = if (exp.category.equals("OTHER", ignoreCase = true)) Math.addExact(runningOtherExpenses, exp.amount) else runningOtherExpenses
+
+                runningGrandExpenses = nextGrand
+                runningGroupExpenses = nextGroup
+                runningIndividualExpenses = nextIndiv
+                runningTransitExpenses = nextTransit
+                runningAccommodationExpenses = nextAccom
+                if (exp.category.equals("ACCOMMODATION", ignoreCase = true)) {
+                    runningAccommodationDays += exp.accommodationDays.coerceAtLeast(0)
+                }
+                runningFoodExpenses = nextFood
+                runningMedicalExpenses = nextMed
+                runningOtherExpenses = nextOther
+                validExpenses.add(exp)
+            } catch (_: Exception) {
+                // Skip overflowing/invalid expense so valid project totals aren't wiped out
+            }
+        }
+
+        val totalGroupExpenses = runningGroupExpenses
 
         // Workers who worked at least 1 present shift among valid attendance records
         val workersWithShifts = workers.filter { worker ->
@@ -1204,16 +1305,27 @@ object WageCalculator {
 
         val performances = workers.map { worker ->
             val workerAtts = validAttendancesByWorker[worker.id].orEmpty()
-            val workerIndivExpenses = expenses.filter {
+            val workerIndivExpenses = validExpenses.filter {
                 it.scope.equals("INDIVIDUAL", ignoreCase = true) && it.workerId == worker.id
             }
-            calculateWorkerPerformance(
-                worker = worker,
-                attendances = workerAtts,
-                individualExpenses = workerIndivExpenses,
-                groupExpenseShare = groupExpenseShares[worker.id] ?: 0L,
-                overtimeMultiplier = overtimeMultiplier
-            )
+            val share = groupExpenseShares[worker.id] ?: 0L
+            try {
+                calculateWorkerPerformance(
+                    worker = worker,
+                    attendances = workerAtts,
+                    individualExpenses = workerIndivExpenses,
+                    groupExpenseShare = share,
+                    overtimeMultiplier = overtimeMultiplier
+                )
+            } catch (_: Exception) {
+                calculateWorkerPerformance(
+                    worker = worker,
+                    attendances = workerAtts,
+                    individualExpenses = emptyList(),
+                    groupExpenseShare = share,
+                    overtimeMultiplier = overtimeMultiplier
+                )
+            }
         }
 
         val totalWorkDaysCount = performances.sumOf { it.totalShifts }
@@ -1226,25 +1338,36 @@ object WageCalculator {
         val totalDeductions = performances.sumOfExact { it.totalDeductions }
 
         // محاسبه یکپارچه هزینه کل پروژه با همان فرمول حساب روزانه (کسر هزینه گروهی و بدون clamp)
-        val grandTotalProjectCost = calculateNetCost(
-            baseWages = totalBaseWagesPaid,
-            hourlyPay = totalHourlyPaid,
-            overtimePay = totalOvertimePaid,
-            allowances = totalAllowances,
-            deductions = totalDeductions,
-            groupExpenses = totalGroupExpenses
-        )
+        val grandTotalProjectCost = try {
+            calculateNetCost(
+                baseWages = totalBaseWagesPaid,
+                hourlyPay = totalHourlyPaid,
+                overtimePay = totalOvertimePaid,
+                allowances = totalAllowances,
+                deductions = totalDeductions,
+                groupExpenses = totalGroupExpenses
+            )
+        } catch (_: Exception) {
+            calculateNetCost(
+                baseWages = totalBaseWagesPaid,
+                hourlyPay = totalHourlyPaid,
+                overtimePay = totalOvertimePaid,
+                allowances = totalAllowances,
+                deductions = totalDeductions,
+                groupExpenses = 0L
+            )
+        }
 
         val todayAttendanceCount = validAttendances.count { it.date == todayStr && it.status != AttendanceStatus.ABSENT }
 
-        val totalTransitExpenses = expenses.filter { it.category.equals("TRANSIT", ignoreCase = true) }.sumOfExact { it.amount }
-        val totalAccommodationExpenses = expenses.filter { it.category.equals("ACCOMMODATION", ignoreCase = true) }.sumOfExact { it.amount }
-        val totalAccommodationDays = expenses.filter { it.category.equals("ACCOMMODATION", ignoreCase = true) }.sumOf { it.accommodationDays }
-        val totalFoodExpenses = expenses.filter { it.category.equals("FOOD", ignoreCase = true) }.sumOfExact { it.amount }
-        val totalMedicalExpenses = expenses.filter { it.category.equals("MEDICAL", ignoreCase = true) }.sumOfExact { it.amount }
-        val totalOtherExpenses = expenses.filter { it.category.equals("OTHER", ignoreCase = true) }.sumOfExact { it.amount }
-        val totalIndividualExpenses = expenses.filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) }.sumOfExact { it.amount }
-        val grandTotalExpenses = expenses.sumOfExact { it.amount }
+        val totalTransitExpenses = runningTransitExpenses
+        val totalAccommodationExpenses = runningAccommodationExpenses
+        val totalAccommodationDays = runningAccommodationDays
+        val totalFoodExpenses = runningFoodExpenses
+        val totalMedicalExpenses = runningMedicalExpenses
+        val totalOtherExpenses = runningOtherExpenses
+        val totalIndividualExpenses = runningIndividualExpenses
+        val grandTotalExpenses = runningGrandExpenses
         val totalWorkerDebt = performances.sumOfExact { it.debtAmount }
 
         return FinancialSummary(
@@ -1341,18 +1464,62 @@ object WageCalculator {
             }
         }
 
-        // Add daily individual expenses for project workers (strictly requires non-null workerId in workerMap, matching calculateFinancialSummary)
-        for (exp in dayExps.filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) && it.workerId != null && workerMap.containsKey(it.workerId) }) {
-            if (exp.impactType.equals("ALLOWANCE", ignoreCase = true)) {
-                allowances = Math.addExact(allowances, exp.amount)
-            } else {
-                deductions = Math.addExact(deductions, exp.amount)
+        // Add daily individual expenses & aggregate daily expenses safely
+        val validDayExps = mutableListOf<ExpenseEntity>()
+        var dailyIndivExpenses = 0L
+        var dailyGroupExpenses = 0L
+        var dailyExpenses = 0L
+        var transitCost = 0L
+        var accommodationCost = 0L
+        var foodCost = 0L
+        var medicalCost = 0L
+
+        for (exp in dayExps) {
+            try {
+                if (exp.amount < 0L || exp.amount > MAX_EXPENSE_AMOUNT) {
+                    throw ArithmeticException("مبلغ هزینه روزانه خارج از محدوده مجاز")
+                }
+                val nextDailyExpenses = Math.addExact(dailyExpenses, exp.amount)
+                val isGroup = exp.scope.equals("GROUP", ignoreCase = true)
+                val isIndiv = exp.scope.equals("INDIVIDUAL", ignoreCase = true)
+                val nextDailyIndiv = if (isIndiv) Math.addExact(dailyIndivExpenses, exp.amount) else dailyIndivExpenses
+                val nextDailyGroup = if (isGroup) Math.addExact(dailyGroupExpenses, exp.amount) else dailyGroupExpenses
+
+                var nextAllowances = allowances
+                var nextDeductions = deductions
+                if (isIndiv && exp.workerId != null && workerMap.containsKey(itOrNull(exp.workerId))) {
+                    if (exp.impactType.equals("ALLOWANCE", ignoreCase = true)) {
+                        nextAllowances = Math.addExact(allowances, exp.amount)
+                    } else {
+                        nextDeductions = Math.addExact(deductions, exp.amount)
+                    }
+                }
+                val totalGross = Math.addExact(
+                    Math.addExact(wages, hourlyPay),
+                    Math.addExact(overtimePay, nextAllowances)
+                )
+                val afterDeductions = Math.subtractExact(totalGross, nextDeductions)
+                Math.subtractExact(afterDeductions, nextDailyGroup)
+
+                val nextTransit = if (exp.category.equals("TRANSIT", ignoreCase = true)) Math.addExact(transitCost, exp.amount) else transitCost
+                val nextAccom = if (exp.category.equals("ACCOMMODATION", ignoreCase = true)) Math.addExact(accommodationCost, exp.amount) else accommodationCost
+                val nextFood = if (exp.category.equals("FOOD", ignoreCase = true)) Math.addExact(foodCost, exp.amount) else foodCost
+                val nextMed = if (exp.category.equals("MEDICAL", ignoreCase = true)) Math.addExact(medicalCost, exp.amount) else medicalCost
+
+                allowances = nextAllowances
+                deductions = nextDeductions
+                dailyExpenses = nextDailyExpenses
+                dailyIndivExpenses = nextDailyIndiv
+                dailyGroupExpenses = nextDailyGroup
+                transitCost = nextTransit
+                accommodationCost = nextAccom
+                foodCost = nextFood
+                medicalCost = nextMed
+                validDayExps.add(exp)
+            } catch (_: Exception) {
+                // Skip overflowing/invalid expense for this day
             }
         }
-
-        val dailyIndivExpenses = dayExps.filter { it.scope.equals("INDIVIDUAL", ignoreCase = true) }.sumOfExact { it.amount }
-        val dailyGroupExpenses = dayExps.filter { it.scope.equals("GROUP", ignoreCase = true) }.sumOfExact { it.amount }
-        val dailyExpenses = dayExps.sumOfExact { it.amount }
 
         // محاسبه هزینه خالص روز از طریق تابع مشترک و بدون clamp به صفر
         val grandDailyCost = calculateNetCost(
@@ -1376,14 +1543,39 @@ object WageCalculator {
             individualExpenses = dailyIndivExpenses,
             workersPresent = presentCount,
             totalHours = hours,
-            transitCost = dayExps.filter { it.category.equals("TRANSIT", ignoreCase = true) }.sumOfExact { it.amount },
-            accommodationCost = dayExps.filter { it.category.equals("ACCOMMODATION", ignoreCase = true) }.sumOfExact { it.amount },
-            foodCost = dayExps.filter { it.category.equals("FOOD", ignoreCase = true) }.sumOfExact { it.amount },
-            medicalCost = dayExps.filter { it.category.equals("MEDICAL", ignoreCase = true) }.sumOfExact { it.amount },
+            transitCost = transitCost,
+            accommodationCost = accommodationCost,
+            foodCost = foodCost,
+            medicalCost = medicalCost,
             attendances = validDayAtts,
-            expenses = dayExps,
+            expenses = validDayExps,
             invalidAttendanceIds = invalidAttendanceIds
         )
+    }
+
+    private fun itOrNull(value: Long?): Long = value ?: -1L
+
+    fun calculateDailyBookkeepingSafe(
+        dateStr: String,
+        workers: List<WorkerEntity>,
+        attendances: List<AttendanceEntity>,
+        expenses: List<ExpenseEntity>,
+        overtimeMultiplier: Double = DEFAULT_OVERTIME_MULTIPLIER
+    ): DailyBookkeeping {
+        return try {
+            calculateDailyBookkeeping(
+                dateStr = dateStr,
+                workers = workers,
+                attendances = attendances,
+                expenses = expenses,
+                overtimeMultiplier = overtimeMultiplier
+            )
+        } catch (_: Exception) {
+            DailyBookkeeping(
+                date = dateStr,
+                dayOfWeek = JalaliCalendar.getDayOfWeek(dateStr)
+            )
+        }
     }
 
     /**

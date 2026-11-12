@@ -61,106 +61,108 @@ object PdfExportUtil {
         }
 
         val pdfDoc = PdfDocument()
-        var pageNumber = 1
+        val cacheDir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val fileName = "گزارش_کارگاه_${System.currentTimeMillis()}.pdf"
+        val file = File(cacheDir, fileName)
 
-        var pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNumber).create()
-        var page = pdfDoc.startPage(pageInfo)
-        var canvas = page.canvas
+        try {
+            var pageNumber = 1
 
-        if (fontLoadFailed) {
-            val warnPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = vazirTypeface
-                textSize = 8f
-                color = Color.parseColor("#DC2626")
+            var pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNumber).create()
+            var page = pdfDoc.startPage(pageInfo)
+            var canvas = page.canvas
+
+            if (fontLoadFailed) {
+                val warnPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                    typeface = vazirTypeface
+                    textSize = 8f
+                    color = Color.parseColor("#DC2626")
+                }
+                drawRtlText(canvas, "توجه: فونت اختصاصی برنامه بارگذاری نشد؛ از قلم پیش‌فرض سیستم برای تولید گزارش استفاده شده است.", MARGIN_LEFT, 12f, warnPaint, CONTENT_WIDTH)
             }
-            drawRtlText(canvas, "توجه: فونت اختصاصی برنامه بارگذاری نشد؛ از قلم پیش‌فرض سیستم برای تولید گزارش استفاده شده است.", MARGIN_LEFT, 12f, warnPaint, CONTENT_WIDTH)
-        }
 
-        // 1. First Page Header
-        drawFirstPageHeader(
-            canvas = canvas,
-            typeface = vazirTypeface,
-            projectName = projectName,
-            employerName = employerName,
-            foremanName = foremanName,
-            analytics = analytics
-        )
+            // 1. First Page Header
+            drawFirstPageHeader(
+                canvas = canvas,
+                typeface = vazirTypeface,
+                projectName = projectName,
+                employerName = employerName,
+                foremanName = foremanName,
+                analytics = analytics
+            )
 
-        // 2. Financial Summary Cards on First Page
-        drawFinancialSummaryCards(canvas, vazirTypeface, analytics)
+            // 2. Financial Summary Cards on First Page
+            drawFinancialSummaryCards(canvas, vazirTypeface, analytics)
 
-        // 3. Workers Table Title
-        val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = vazirTypeface
-            textSize = 12f
-            isFakeBoldText = true
-            color = Color.parseColor("#0F172A")
-        }
-        drawRtlText(canvas, "صورت‌جلسه کارکرد و تسویه حساب هر کارگر (تفکیک به ازای شناسه کارگر):", MARGIN_LEFT, 192f, textPaint, CONTENT_WIDTH)
+            // 3. Workers Table Title
+            val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                typeface = vazirTypeface
+                textSize = 12f
+                isFakeBoldText = true
+                color = Color.parseColor("#0F172A")
+            }
+            drawRtlText(canvas, "صورت‌جلسه کارکرد و تسویه حساب هر کارگر (تفکیک به ازای شناسه کارگر):", MARGIN_LEFT, 192f, textPaint, CONTENT_WIDTH)
 
-        // Table Header
-        var currentY = 212f
-        drawTableHeader(canvas, vazirTypeface, currentY)
-        currentY += 22f
+            // Table Header
+            var currentY = 212f
+            drawTableHeader(canvas, vazirTypeface, currentY)
+            currentY += 22f
 
-        // Draw Workers Rows (All workers, separate row per worker ID)
-        val rowHeight = 22f
-        for ((index, p) in performances.withIndex()) {
-            if (currentY + rowHeight > MAX_CONTENT_Y) {
-                // Finish current page
+            // Draw Workers Rows (All workers, separate row per worker ID, dynamically measured height)
+            for ((index, p) in performances.withIndex()) {
+                val rowHeight = measureWorkerRowHeight(vazirTypeface, index, p)
+                if (currentY + rowHeight > MAX_CONTENT_Y) {
+                    // Finish current page
+                    drawPageFooter(canvas, vazirTypeface, pageNumber)
+                    pdfDoc.finishPage(page)
+
+                    // Start next page
+                    pageNumber++
+                    pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNumber).create()
+                    page = pdfDoc.startPage(pageInfo)
+                    canvas = page.canvas
+
+                    // Compact Header for continuation page
+                    drawContinuationHeader(canvas, vazirTypeface, projectName)
+                    currentY = 48f
+                    drawTableHeader(canvas, vazirTypeface, currentY)
+                    currentY += 22f
+                }
+
+                drawWorkerRow(canvas, vazirTypeface, index, p, currentY, rowHeight)
+                currentY += rowHeight
+            }
+
+            // Summary and Signatures: if not enough room on current page, create a final page
+            val summaryNeededHeight = 135f
+            if (currentY + summaryNeededHeight > MAX_CONTENT_Y) {
                 drawPageFooter(canvas, vazirTypeface, pageNumber)
                 pdfDoc.finishPage(page)
 
-                // Start next page
                 pageNumber++
                 pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNumber).create()
                 page = pdfDoc.startPage(pageInfo)
                 canvas = page.canvas
 
-                // Compact Header for continuation page
                 drawContinuationHeader(canvas, vazirTypeface, projectName)
                 currentY = 48f
-                drawTableHeader(canvas, vazirTypeface, currentY)
-                currentY += 22f
             }
 
-            drawWorkerRow(canvas, vazirTypeface, index, p, currentY)
-            currentY += rowHeight
-        }
+            currentY += 10f
+            drawSummaryAndExpensesBox(canvas, vazirTypeface, currentY, analytics, performances, expenses)
+            currentY += 72f
 
-        // Summary and Signatures: if not enough room on current page, create a final page
-        val summaryNeededHeight = 135f
-        if (currentY + summaryNeededHeight > MAX_CONTENT_Y) {
+            drawSignatures(canvas, vazirTypeface, currentY, foremanName, employerName)
+
             drawPageFooter(canvas, vazirTypeface, pageNumber)
             pdfDoc.finishPage(page)
 
-            pageNumber++
-            pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNumber).create()
-            page = pdfDoc.startPage(pageInfo)
-            canvas = page.canvas
-
-            drawContinuationHeader(canvas, vazirTypeface, projectName)
-            currentY = 48f
+            FileOutputStream(file).use { out ->
+                pdfDoc.writeTo(out)
+            }
+        } finally {
+            pdfDoc.close()
         }
-
-        currentY += 10f
-        drawSummaryAndExpensesBox(canvas, vazirTypeface, currentY, analytics, performances, expenses)
-        currentY += 72f
-
-        drawSignatures(canvas, vazirTypeface, currentY, foremanName, employerName)
-
-        drawPageFooter(canvas, vazirTypeface, pageNumber)
-        pdfDoc.finishPage(page)
-
-        // Save to cache/exports
-        val fileName = "گزارش_کارگاه_${System.currentTimeMillis()}.pdf"
-        val cacheDir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val file = File(cacheDir, fileName)
-
-        FileOutputStream(file).use { out ->
-            pdfDoc.writeTo(out)
-        }
-        pdfDoc.close()
 
         return file
     }
@@ -281,17 +283,66 @@ object PdfExportUtil {
         drawRtlText(canvas, "خالص دریافتی", 35f, y + 4f, headerPaint, 95)
     }
 
+    private fun formatWorkerAdjustText(p: WorkerPerformance): Triple<String, Long, Boolean> {
+        val netAdjust = p.totalAllowances - p.totalDeductions - p.groupExpenseShare
+        val baseAdjustStr = if (netAdjust > 0L) "+${Formatters.formatCurrency(netAdjust)}" else if (netAdjust < 0L) Formatters.formatCurrency(netAdjust) else "۰"
+        val otherNet = p.otherAllowanceTotal - p.otherDeductionTotal
+        val hasOther = p.otherAllowanceTotal > 0L || p.otherDeductionTotal > 0L
+        val adjustStr = if (hasOther) {
+            val otherSign = if (otherNet > 0L) "+" else ""
+            "$baseAdjustStr (سایر: $otherSign${Formatters.formatCurrency(otherNet)})"
+        } else {
+            baseAdjustStr
+        }
+        return Triple(adjustStr, netAdjust, hasOther)
+    }
+
+    private fun measureWorkerRowHeight(
+        typeface: Typeface,
+        index: Int,
+        p: WorkerPerformance
+    ): Float {
+        val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.typeface = typeface
+            textSize = 8.5f
+        }
+        val (adjustStr, _, hasOther) = formatWorkerAdjustText(p)
+        val adjustPaint = TextPaint(textPaint).apply {
+            if (hasOther) textSize = 7.2f
+        }
+        val isDebt = p.debtAmount > 0L
+        val payoutStr = if (isDebt) "بدهکار: ${Formatters.formatCurrency(p.debtAmount)}" else Formatters.formatCurrency(p.netPayout)
+        val payoutPaint = TextPaint(textPaint).apply {
+            isFakeBoldText = true
+            if (isDebt) textSize = 7.5f
+        }
+        val otStr = if (p.overtimeHours > 0) Formatters.formatHours(p.overtimeHours) else "-"
+
+        val heights = listOf(
+            measureRtlTextHeight(Formatters.toPersianDigits(index + 1), textPaint, 28),
+            measureRtlTextHeight("${p.worker.name} (#${p.worker.id})", textPaint, 145),
+            measureRtlTextHeight(p.worker.role, textPaint, 105),
+            measureRtlTextHeight(p.formatWorkSummary(), textPaint, 185),
+            measureRtlTextHeight(otStr, textPaint, 85),
+            measureRtlTextHeight(adjustStr, adjustPaint, 95),
+            measureRtlTextHeight(payoutStr, payoutPaint, 95)
+        )
+        val maxContentHeight = heights.maxOrNull() ?: 0f
+        return maxOf(22f, maxContentHeight + 8f)
+    }
+
     private fun drawWorkerRow(
         canvas: Canvas,
         typeface: Typeface,
         index: Int,
         p: WorkerPerformance,
-        y: Float
+        y: Float,
+        rowHeight: Float
     ) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         if (index % 2 == 0) {
             paint.color = Color.parseColor("#F8FAFC")
-            canvas.drawRect(MARGIN_LEFT, y - 2f, MARGIN_RIGHT, y + 19f, paint)
+            canvas.drawRect(MARGIN_LEFT, y - 2f, MARGIN_RIGHT, y + rowHeight - 2f, paint)
         }
 
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -323,16 +374,7 @@ object PdfExportUtil {
         drawRtlText(canvas, otStr, 235f, y + 3f, textPaint, 85)
 
         // 6. Net allowances / deductions / group share (با نمایش جداگانه «سایر» در صورت وجود)
-        val netAdjust = p.totalAllowances - p.totalDeductions - p.groupExpenseShare
-        val baseAdjustStr = if (netAdjust > 0L) "+${Formatters.formatCurrency(netAdjust)}" else if (netAdjust < 0L) Formatters.formatCurrency(netAdjust) else "۰"
-        val otherNet = p.otherAllowanceTotal - p.otherDeductionTotal
-        val hasOther = p.otherAllowanceTotal > 0L || p.otherDeductionTotal > 0L
-        val adjustStr = if (hasOther) {
-            val otherSign = if (otherNet > 0L) "+" else ""
-            "$baseAdjustStr (سایر: $otherSign${Formatters.formatCurrency(otherNet)})"
-        } else {
-            baseAdjustStr
-        }
+        val (adjustStr, netAdjust, hasOther) = formatWorkerAdjustText(p)
         val adjustPaint = TextPaint(textPaint).apply {
             color = if (netAdjust > 0L) Color.parseColor("#059669") else if (netAdjust < 0L) Color.parseColor("#E11D48") else Color.parseColor("#64748B")
             if (hasOther) textSize = 7.2f
@@ -480,6 +522,21 @@ object PdfExportUtil {
             color = Color.parseColor("#0F172A")
         }
         drawRtlText(canvas, value, x + 5f, y + 25f, valuePaint, (width - 12).toInt())
+    }
+
+    private fun measureRtlTextHeight(
+        text: String,
+        paint: TextPaint,
+        width: Int,
+        align: Layout.Alignment = Layout.Alignment.ALIGN_NORMAL
+    ): Float {
+        if (text.isBlank()) return 0f
+        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
+            .setAlignment(align)
+            .setTextDirection(TextDirectionHeuristics.RTL)
+            .setIncludePad(false)
+            .build()
+        return layout.height.toFloat()
     }
 
     /**

@@ -202,12 +202,53 @@ fun RestoreBackupDialog(
     val context = LocalContext.current
     var localBackups by remember { mutableStateOf<List<LocalBackupFileInfo>>(emptyList()) }
     var pendingConfirmFile by remember { mutableStateOf<LocalBackupFileInfo?>(null) }
+    var pendingDeleteFile by remember { mutableStateOf<LocalBackupFileInfo?>(null) }
     var refreshTrigger by remember { mutableStateOf(0) }
 
     LaunchedEffect(refreshTrigger) {
         localBackups = withContext(Dispatchers.IO) {
             BackupUtil.listLocalBackups(context)
         }
+    }
+
+    if (pendingDeleteFile != null) {
+        val target = pendingDeleteFile!!
+        AlertDialog(
+            onDismissRequest = { pendingDeleteFile = null },
+            title = {
+                Text(
+                    text = "تأیید حذف فایل پشتیبان",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.5.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "آیا از حذف فایل پشتیبان «${target.fileName}» از حافظه برنامه اطمینان دارید؟ این عملیات قابل بازگشت نیست.",
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        target.file.delete()
+                        pendingDeleteFile = null
+                        refreshTrigger++
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = RoseAccent),
+                    modifier = Modifier.testTag("confirm_delete_local_backup_button")
+                ) {
+                    Text("بله، حذف شود", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteFile = null }) {
+                    Text("انصراف")
+                }
+            }
+        )
+        return
     }
 
     if (pendingConfirmFile != null) {
@@ -403,10 +444,11 @@ fun RestoreBackupDialog(
                                         }
                                         IconButton(
                                             onClick = {
-                                                item.file.delete()
-                                                refreshTrigger++
+                                                pendingDeleteFile = item
                                             },
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .testTag("delete_local_backup_${item.fileName}")
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.DeleteOutline,

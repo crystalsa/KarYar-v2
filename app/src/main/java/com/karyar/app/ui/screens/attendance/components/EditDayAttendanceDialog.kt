@@ -172,7 +172,7 @@ fun EditDayAttendanceDialog(
         Formatters.validateWageInput(dailyWageStr, fieldLabel = "دستمزد روزانه")
     } else null
 
-    val hourlyHoursError = if (status == AttendanceStatus.HOURLY || status == AttendanceStatus.HALF_DAY) {
+    val hourlyHoursError = if (status == AttendanceStatus.HOURLY) {
         Formatters.validateHoursInput(hourlyHoursStr, fieldLabel = "ساعت کارکرد", maxHours = Formatters.MAX_HOURLY_HOURS)
     } else null
 
@@ -276,8 +276,11 @@ fun EditDayAttendanceDialog(
                         selected = status == AttendanceStatus.FULL_DAY,
                         color = EmeraldAccent,
                         onClick = {
+                            val prevStatus = status
                             status = AttendanceStatus.FULL_DAY
-                            if (!isDailyWageEnabled && dailyWageStr.isBlank() && worker.baseDailyWage > 0L) {
+                            val halfDefault = WageCalculator.roundToLong(worker.baseDailyWage / 2.0)
+                            val halfDefaultStr = if (halfDefault > 0L) Formatters.formatThousandsPersian(halfDefault) else ""
+                            if (worker.baseDailyWage > 0L && ((!isDailyWageEnabled && dailyWageStr.isBlank()) || (prevStatus == AttendanceStatus.HALF_DAY && dailyWageStr == halfDefaultStr))) {
                                 isDailyWageEnabled = true
                                 dailyWageStr = Formatters.formatThousandsPersian(worker.baseDailyWage)
                             }
@@ -289,8 +292,10 @@ fun EditDayAttendanceDialog(
                         selected = status == AttendanceStatus.HALF_DAY,
                         color = AmberAccent,
                         onClick = {
+                            val prevStatus = status
                             status = AttendanceStatus.HALF_DAY
-                            if (!isDailyWageEnabled && dailyWageStr.isBlank() && worker.baseDailyWage > 0L) {
+                            val fullDefaultStr = if (worker.baseDailyWage > 0L) Formatters.formatThousandsPersian(worker.baseDailyWage) else ""
+                            if (worker.baseDailyWage > 0L && ((!isDailyWageEnabled && dailyWageStr.isBlank()) || (prevStatus == AttendanceStatus.FULL_DAY && dailyWageStr == fullDefaultStr))) {
                                 isDailyWageEnabled = true
                                 dailyWageStr = Formatters.formatThousandsPersian(WageCalculator.roundToLong(worker.baseDailyWage / 2.0))
                             }
@@ -394,7 +399,7 @@ fun EditDayAttendanceDialog(
                 }
 
                 // اگر وضعیت ساعتی است: تنظیم دقیق ساعات کارکرد ساعتی این روز
-                AnimatedVisibility(visible = status == AttendanceStatus.HOURLY || status == AttendanceStatus.HALF_DAY) {
+                AnimatedVisibility(visible = status == AttendanceStatus.HOURLY) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = Slate100,
@@ -566,27 +571,6 @@ fun EditDayAttendanceDialog(
                                     .padding(top = 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                if ((status == AttendanceStatus.FULL_DAY || status == AttendanceStatus.HALF_DAY) && isDailyWageEnabled) {
-                                    OutlinedTextField(
-                                        value = dailyWageStr,
-                                        onValueChange = { dailyWageStr = Formatters.formatPriceInput(it) },
-                                        label = { Text("دستمزد روزانه این روز (تومان)", fontSize = 11.sp) },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        isError = dailyWageError != null,
-                                        supportingText = if (dailyWageError != null) {
-                                            {
-                                                Text(
-                                                    text = dailyWageError,
-                                                    color = MaterialTheme.colorScheme.error,
-                                                    fontSize = 10.sp
-                                                )
-                                            }
-                                        } else null,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true
-                                    )
-                                }
-
                                 if (status == AttendanceStatus.HOURLY) {
                                     OutlinedTextField(
                                         value = hourlyWageRateStr,

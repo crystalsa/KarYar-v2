@@ -347,9 +347,14 @@ fun AttendanceScreen(
                                 }
 
                                 // مجموع پرداختی روز: محاسبه دقیق و یکپارچه با استفاده از WageCalculator
-                                val dayTotalPayout = dayWorkers.sumOf { worker ->
+                                val dayTotalPayout = dayWorkers.fold(0L) { acc, worker ->
                                     val att = attendanceList.firstOrNull { it.workerId == worker.id && it.date == targetDate }
-                                    WageCalculator.calculateDayPayout(worker, att)
+                                    val payout = WageCalculator.calculateDayOrNull(worker, att)?.netPayout ?: 0L
+                                    try {
+                                        Math.addExact(acc, payout)
+                                    } catch (_: ArithmeticException) {
+                                        acc
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -437,7 +442,9 @@ fun AttendanceScreen(
     if (editingWorker != null) {
         val worker = editingWorker!!
         val currentAtt = attendanceList.firstOrNull { it.workerId == worker.id && it.date == targetDate }
-        var pendingDayAttendance: com.karyar.app.data.local.entity.AttendanceEntity? = null
+        var pendingDayAttendance by remember(worker.id, targetDate) {
+            mutableStateOf<com.karyar.app.data.local.entity.AttendanceEntity?>(null)
+        }
         AddEditWorkerDialog(
             initialWorker = worker,
             initialAttendance = currentAtt,

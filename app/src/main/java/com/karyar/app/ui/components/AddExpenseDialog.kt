@@ -182,6 +182,12 @@ fun AddExpenseDialog(
     fun submitExpense() {
         titleTouched = true
         amountTouched = true
+        val parsedDate = JalaliCalendar.parseDateOrNull(date.trim())
+        if (parsedDate == null) {
+            validationError = JalaliCalendar.validateDateError(date) ?: "تاریخ واردشده معتبر نیست."
+            return
+        }
+        val normalizedDate = JalaliCalendar.formatDate(parsedDate.first, parsedDate.second, parsedDate.third)
         val parsedAmount = Formatters.parsePrice(amountInput)
         val effectiveWorker = if (scope == "INDIVIDUAL") {
             workers.firstOrNull { it.id == selectedWorkerId }
@@ -196,8 +202,8 @@ fun AddExpenseDialog(
             workerId = if (scope == "INDIVIDUAL") effectiveWorker?.id else null,
             workerName = if (scope == "INDIVIDUAL") effectiveWorker?.name else null,
             amount = parsedAmount,
-            date = date.trim(),
-            epochDay = JalaliCalendar.toEpochDay(date.trim()),
+            date = normalizedDate,
+            epochDay = JalaliCalendar.safeEpochDay(normalizedDate),
             notes = notes.trim()
         )
         val err = WageCalculator.validateExpense(

@@ -375,6 +375,7 @@ fun CreateNextDayDialog(
                                         ?: (baseDate to JalaliCalendar.getDayOfWeek(baseDate))
                                     date = nextD
                                     dayOfWeek = nextDow
+                                    dateError = null
                                 },
                                 onDecrement = {
                                     val baseDate = JalaliCalendar.formatDate(year, month, day.coerceIn(1, daysInCurrentMonth))
@@ -383,6 +384,7 @@ fun CreateNextDayDialog(
                                         ?: (baseDate to JalaliCalendar.getDayOfWeek(baseDate))
                                     date = prevD
                                     dayOfWeek = prevDow
+                                    dateError = null
                                 },
                                 modifier = Modifier.weight(1.1f)
                             )
@@ -401,6 +403,7 @@ fun CreateNextDayDialog(
                                     val newDateStr = JalaliCalendar.formatDate(nextY, nextM, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
                                 },
                                 onDecrement = {
                                     val prevM = if (month > 1) month - 1 else 12
@@ -410,6 +413,7 @@ fun CreateNextDayDialog(
                                     val newDateStr = JalaliCalendar.formatDate(prevY, prevM, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
                                 },
                                 modifier = Modifier.weight(1.1f)
                             )
@@ -427,6 +431,7 @@ fun CreateNextDayDialog(
                                     val newDateStr = JalaliCalendar.formatDate(nextY, month, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
                                 },
                                 onDecrement = {
                                     val prevY = year - 1
@@ -435,6 +440,7 @@ fun CreateNextDayDialog(
                                     val newDateStr = JalaliCalendar.formatDate(prevY, month, clampedD)
                                     date = newDateStr
                                     dayOfWeek = JalaliCalendar.getDayOfWeek(newDateStr)
+                                    dateError = null
                                 },
                                 modifier = Modifier.weight(0.9f)
                             )
@@ -481,11 +487,11 @@ fun CreateNextDayDialog(
                         icon = Icons.Default.CalendarMonth,
                         onClick = {
                             val err = JalaliCalendar.validateDateError(date)
-                            if (err != null) {
-                                dateError = err
+                            val parsed = if (err == null) JalaliCalendar.parseDateOrNull(date) else null
+                            if (err != null || parsed == null) {
+                                dateError = err ?: "تاریخ واردشده معتبر نیست."
                             } else {
-                                val (y, m, d) = JalaliCalendar.parseDate(date)
-                                val normalizedDate = JalaliCalendar.formatDate(y, m, d)
+                                val normalizedDate = JalaliCalendar.formatDate(parsed.first, parsed.second, parsed.third)
                                 onConfirm(normalizedDate, dayOfWeek)
                             }
                         },

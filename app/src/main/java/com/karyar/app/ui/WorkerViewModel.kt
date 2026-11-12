@@ -516,10 +516,26 @@ class WorkerViewModel(
         }
     }
 
+    private fun clearTransientSessionState() {
+        workerSearchQuery.value = ""
+        isWorkerSearchVisible.value = false
+        _pendingDeleteAttendance.value = null
+        _pendingDateConflict.value = null
+        _calculationError.value = null
+        synchronized(undoStack) {
+            undoStack.clear()
+            _lastUndoState.value = null
+        }
+    }
+
     // Selection Handlers
     fun selectFolder(folder: WorkplaceFolderEntity?) {
+        val isSwitchingFolder = currentFolder.value?.id != folder?.id
         currentFolder.value = folder
         selectedDateFolder.value = null
+        if (isSwitchingFolder) {
+            clearTransientSessionState()
+        }
     }
 
     fun selectDateFolder(dateFolder: DateFolderEntity?) {
@@ -737,44 +753,14 @@ class WorkerViewModel(
     ) {
         val folder = currentFolder.value ?: return
         launchDb("addWorkerWithDate") {
-            val existingDf = repository.getDateFolderByDate(folder.id, workDate)
-            val dateFolder = if (existingDf != null) {
-                existingDf
-            } else {
-                val newDfId = repository.insertDateFolder(
-                    DateFolderEntity(
-                        folderId = folder.id,
-                        date = workDate,
-                        dayOfWeek = dayOfWeek,
-                        title = title
-                    )
-                )
-                DateFolderEntity(
-                    id = newDfId,
-                    folderId = folder.id,
-                    date = workDate,
-                    dayOfWeek = dayOfWeek,
-                    title = title
-                )
-            }
+            val dateFolder = repository.addWorkerWithDate(
+                worker = worker,
+                folder = folder,
+                workDate = workDate,
+                dayOfWeek = dayOfWeek,
+                title = title
+            )
             selectedDateFolder.value = dateFolder
-
-            val finalWorker = worker.copy(
-                folderId = folder.id
-            )
-            val workerId = repository.insertWorker(finalWorker)
-
-            repository.insertAttendance(
-                WageCalculator.defaultAttendanceFor(
-                    worker = finalWorker.copy(id = workerId),
-                    date = workDate,
-                    dateFolderId = dateFolder.id,
-                    folderId = folder.id,
-                    workplaceName = folder.name,
-                    foremanName = folder.foremanName,
-                    employerName = folder.employerName
-                )
-            )
         }
     }
 
@@ -1104,6 +1090,11 @@ class WorkerViewModel(
     fun addExistingWorkerToDate(worker: WorkerEntity, date: String, dateFolderId: Long) {
         val folder = currentFolder.value ?: return
         launchDb("addExistingWorkerToDate") {
+            val existing = repository.getAttendanceForWorkerAndDate(worker.id, date)
+            if (existing != null) {
+                showSnackbarMessage("«${worker.name}» از قبل در این روز کاری ثبت شده است")
+                return@launchDb
+            }
             repository.insertAttendance(
                 WageCalculator.defaultAttendanceFor(
                     worker = worker,
@@ -1196,6 +1187,7 @@ class WorkerViewModel(
                 repository.clearAllData()
                 currentFolder.value = null
                 selectedDateFolder.value = null
+                clearTransientSessionState()
             }
             val newFolderId = repository.loadSampleData()
             val newFolder = repository.getFolderById(newFolderId)
@@ -1210,6 +1202,7 @@ class WorkerViewModel(
             repository.clearAllData()
             currentFolder.value = null
             selectedDateFolder.value = null
+            clearTransientSessionState()
         }
     }
 

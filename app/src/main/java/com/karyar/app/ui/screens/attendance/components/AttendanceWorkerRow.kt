@@ -148,9 +148,7 @@ fun AttendanceWorkerRow(
                 Checkbox(
                     checked = isFullDay,
                     onCheckedChange = {
-                        if (!isHourlyWorker) {
-                            onSetStatus("FULL")
-                        }
+                        onSetStatus("FULL")
                     },
                     colors = CheckboxDefaults.colors(
                         checkedColor = EmeraldAccent,
@@ -169,9 +167,7 @@ fun AttendanceWorkerRow(
                 Checkbox(
                     checked = isHalfDay,
                     onCheckedChange = {
-                        if (!isHourlyWorker) {
-                            onSetStatus("HALF")
-                        }
+                        onSetStatus("HALF")
                     },
                     colors = CheckboxDefaults.colors(
                         checkedColor = AmberAccent,
@@ -190,7 +186,9 @@ fun AttendanceWorkerRow(
                 Checkbox(
                     checked = isHourlyChecked,
                     onCheckedChange = {
-                        if (!worker.isHourlyEnabled || (worker.hourlyWageRate <= 0 && worker.baseHourlyWage <= 0)) {
+                        if (isHourlyChecked) {
+                            onSetStatus("HOURLY")
+                        } else if (!worker.isHourlyEnabled || (worker.hourlyWageRate <= 0 && worker.baseHourlyWage <= 0)) {
                             onHourlyRequired()
                         } else {
                             onSetStatus("HOURLY")
